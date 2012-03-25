@@ -213,6 +213,7 @@ int qemu_main(int argc, char **argv, char **envp);
 
 #include "android/snaphost-android.h"
 
+#include "argos/argos-memmap.h"
 #ifdef CONFIG_STANDALONE_CORE
 /* Verbose value used by the standalone emulator core (without UI) */
 unsigned long   android_verbose;
@@ -4079,6 +4080,11 @@ int main(int argc, char **argv, char **envp)
                      (int)(ram_size / 1024 / 1024), (int)(r_ram / 1024 / 1024));
             ram_size = r_ram;
         }
+    }
+
+    if (!(argos_memmap = argos_memmap_createz(ram_size))) {
+	    fprintf(stderr, "Could not allocate argos memory map\n");
+	    exit(1);
     }
 
 #ifdef CONFIG_KQEMU
