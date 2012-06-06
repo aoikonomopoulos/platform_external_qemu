@@ -14,6 +14,7 @@
 #include "audio/audio.h"
 #include "qemu_debug.h"
 #include "android/globals.h"
+#include "android/utils/system.h"
 
 #define  DEBUG  1
 
@@ -572,7 +573,9 @@ void goldfish_audio_init(uint32_t base, int id, const char* input_source)
      }
 #endif
 
+    BEGIN_NOSIGALRM
     AUD_register_card( "goldfish_audio", &s->card);
+    END_NOSIGALRM
 
     as.freq = 44100;
     as.nchannels = 2;
