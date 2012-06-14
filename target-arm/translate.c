@@ -2546,6 +2546,20 @@ static int cp15_tls_load_store(CPUState *env, DisasContext *s, uint32_t insn, ui
     return 1;
 }
 
+static int is_debug_cp15(uint32_t insn)
+{
+	unsigned op1, op2, crn, crm;
+	op1 = (insn >> 21) & 0x7;
+	op2 = (insn >> 5) & 0x7;
+	crn = (insn >> 16) & 0xf;
+	crm = insn & 0xf;
+
+	return !(insn & ARM_CP_RW_BIT) &&
+		(op1 == 0) &&
+		(crn == 1) &&
+		(crm > 2);
+}
+
 /* Disassemble system coprocessor (cp15) instruction.  Return nonzero if
    instruction is not defined.  */
 static int disas_cp15_insn(CPUState *env, DisasContext *s, uint32_t insn)
@@ -2569,7 +2583,7 @@ static int disas_cp15_insn(CPUState *env, DisasContext *s, uint32_t insn)
         /* cdp */
         return 1;
     }
-    if (IS_USER(s) && !cp15_user_ok(insn)) {
+    if (IS_USER(s) && !cp15_user_ok(insn) && !is_debug_cp15(insn)) {
         return 1;
     }
 
