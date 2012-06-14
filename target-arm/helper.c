@@ -4,6 +4,7 @@
 
 #include "cpu.h"
 #include "exec-all.h"
+#include "exec.h"
 #include "gdbstub.h"
 #include "helper.h"
 #include "qemu-common.h"
@@ -14,6 +15,8 @@
 #include "android-trace.h"
 #endif
 #endif
+
+#include <argos/argos-memmap.h>
 
 static uint32_t cortexa9_cp15_c0_c1[8] =
 { 0x1031, 0x11, 0x000, 0, 0x00100103, 0x20000000, 0x01230000, 0x00002111 };
@@ -1396,6 +1399,38 @@ static uint32_t extended_mpu_ap_bits(uint32_t val)
     return ret;
 }
 
+static unsigned long
+vtop(CPUState *env, uint32_t vaddr)
+{
+	int idx;
+	struct CPUTLBEntry *tlb_entry;
+	target_phys_addr_t paddr;
+	int tlb_filled = 0;
+	int mmu_idx = cpu_mmu_index(env);
+
+	idx = (vaddr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
+	tlb_entry = &env->tlb_table[mmu_idx][idx];
+
+	printf("tlb_entry %p\n", tlb_entry);
+
+	while ((tlb_entry->addr_read &
+	     tlb_entry->addr_write &
+	     tlb_entry->addr_code)
+	    & TLB_INVALID_MASK) {
+		if (tlb_filled)
+			cpu_abort(env, "No mapping for vaddr %#x\n", vaddr);
+		/* XXX: cpu_arm_handle_mmu_fault()? */
+		tlb_fill(vaddr, !0, mmu_idx, GETPC());
+		tlb_filled = !0;
+	}
+
+	paddr = vaddr + tlb_entry->addend;
+	printf("vtop: v%#x -> %#x (idx = %d, mmu_idx = %d)\n", vaddr, paddr, idx, mmu_idx);
+	if (vaddr == paddr)
+		cpu_abort(env, "vaddr == paddr\n");
+	return paddr - (uint32_t)phys_ram_base;
+}
+
 void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
 {
     int op1;
@@ -1475,6 +1510,31 @@ void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
                 goto bad_reg;
             }
             break;
+	case 3: {	/* set tag at the address held in val */
+		argos_rtag_t tag = op2;
+		FILE *fp;
+		fp = fopen("/tmp/set_cp15.log", "a");
+		setbuf(fp, NULL);
+
+		argos_memmap_stb(vtop(env, val), &tag);
+		fprintf(fp, "value: %#x\n", val);
+		fclose(fp);
+		break;
+	}
+	case 4:
+		argos_memmap_clear(vtop(env, val), 1);
+		break;
+	case 5:
+		/* if this sets the PC, the user gets to keep all N pieces */
+		env->regs[(insn >> 12) & 0xf] = argos_memmap_istainted(vtop(env, val));
+		break;
+	case 6:
+		loglevel |= CPU_LOG_TB_OP;
+		cpu_set_log_filename("/tmp/tcg.log");
+		break;
+	case 7:
+		loglevel &= CPU_LOG_TB_OP;
+		break;
         default:
             goto bad_reg;
         }
