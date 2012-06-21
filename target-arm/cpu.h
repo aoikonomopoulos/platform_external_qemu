@@ -71,6 +71,7 @@ typedef uint32_t ARMReadCPFunc(void *opaque, int cp_info,
 
 struct arm_boot_info;
 
+#define CPU_NB_REGS	16
 #define NB_MMU_MODES 2
 
 /* We currently assume float and double are IEEE single and double

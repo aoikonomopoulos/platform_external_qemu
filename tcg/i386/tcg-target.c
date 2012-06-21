@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#include <argos/argos-memmap.h>
+#undef NDEBUG
 #ifndef NDEBUG
 static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #if TCG_TARGET_REG_BITS == 64
@@ -32,6 +34,7 @@ static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #endif
 };
 #endif
+#define NDEBUG
 
 static const int tcg_target_reg_alloc_order[] = {
 #if TCG_TARGET_REG_BITS == 64
@@ -80,6 +83,15 @@ static const int tcg_target_call_oarg_regs[2] = {
     TCG_REG_EAX,
     TCG_REG_EDX
 };
+
+/*
+ * XXX: this is broken when the guest cpu != (x86|arm)
+ * and so is the instrumentation below, which assumes
+ * the CPUState starts with an array of registers.
+ */
+#ifndef CPU_NB_REGS
+#define CPU_NB_REGS ((tcg_target_ulong)-1)
+#endif
 
 static uint8_t *tb_ret_addr;
 
@@ -512,14 +524,6 @@ static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
     tcg_out_modrm(s, OPC_ARITH_GvEv + (subop << 3) + ext, dest, src);
 }
 
-static inline void tcg_out_mov(TCGContext *s, TCGType type, int ret, int arg)
-{
-    if (arg != ret) {
-        int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
-        tcg_out_modrm(s, opc, ret, arg);
-    }
-}
-
 static void tcg_out_movi(TCGContext *s, TCGType type,
                          int ret, tcg_target_long arg)
 {
@@ -536,6 +540,159 @@ static void tcg_out_movi(TCGContext *s, TCGType type,
         tcg_out_opc(s, OPC_MOVL_Iv + P_REXW + LOWREGMASK(ret), 0, ret, 0);
         tcg_out32(s, arg);
         tcg_out32(s, arg >> 31 >> 1);
+    }
+}
+
+static inline void tcg_out_mov_notaint(TCGContext *s, TCGType type, int ret, int arg)
+{
+	int opc;
+
+	if (arg == ret)
+		return;
+	opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+	tcg_out_modrm(s, opc, ret, arg);
+}
+
+static inline void tcg_out_ld_notaint(TCGContext *s, TCGType type, int ret,
+                              int arg1, tcg_target_long arg2)
+{
+    int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+    tcg_out_modrm_offset(s, opc, ret, arg1, arg2);
+}
+
+static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
+                              int arg1, tcg_target_long arg2);
+
+static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1, tcg_target_long arg2)
+{
+	tcg_out_ld_notaint(s, type, ret, arg1, arg2);
+	if (!argos_enabled) {
+		return;
+	}
+
+	if (arg1 != TCG_AREG0)
+		abort();
+	/* XXX: the following assumes regs come first in the CPUState */
+	if (arg2 >= (CPU_NB_REGS * sizeof(target_ulong))) {
+		/* XXX: not a write to a 'hard' guest register, ignore for now */
+		return;
+	}
+	tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
+	tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+}
+
+static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
+                              int arg1, tcg_target_long arg2)
+{
+    if (!argos_enabled) {
+        tcg_out_ld_notaint(s, type, ret, arg1, arg2);
+	return;
+    }
+    /*
+     * ret is the register we're loading to,
+     * arg1 is rm is the base register used for the indirect access
+     * arg2 is the displacement.
+     * Load the effective address to the register reserved for
+     * argos, and subtract phys_ram_base.
+     * We need to do the lea calculation before the actual load,
+     * as the load might clobber one of the registers involved.
+     */
+    tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
+    tcg_out_ld_notaint(s, type, ret, arg1, arg2);
+    tcg_out8(s, 0x50);	/* push %eax */
+    tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1,
+		       (tcg_target_long)&phys_ram_base);
+    tgen_arithr(s, ARITH_SUB, TCG_REG_ARGOS, TCG_REG_EAX);
+    
+    /*
+     * Find the offset off the argos tag (XXX: assumes bytemap)
+     * XXX: can fold the add/sub
+     */
+    tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1,
+		       (tcg_target_long)&argos_memmap);
+    tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, TCG_REG_EAX);
+    
+    tcg_out8(s, 0x97);	/* xchg %eax, %edi */
+    /*
+     * OK, we have the offset of the argos tag in %rax,
+     * now load the value of the tag in %al
+     */
+    tcg_out8(s, 0x8b); tcg_out8(s, 0x00);	/* mov (%eax), %eax */
+    
+    /* store it to the tag of 'ret' */
+    tcg_out_st_notaint(s, type, TCG_REG_EAX, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+    
+    tcg_out8(s, 0x58);	/* pop %eax */
+}
+
+static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
+                              int arg1, tcg_target_long arg2)
+{
+    int opc = OPC_MOVL_EvGv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+    tcg_out_modrm_offset(s, opc, arg, arg1, arg2);
+}
+
+static inline void tcg_out_st(TCGContext *s, TCGType type, int arg,
+                              int arg1, tcg_target_long arg2)
+{
+	if (!argos_enabled) {
+		tcg_out_st_notaint(s, type, arg, arg1, arg2);
+		return;
+	}
+	tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
+	tcg_out_st_notaint(s, type, arg, arg1, arg2);
+	tcg_out8(s, 0x50);	/* push %eax */
+	tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1, (tcg_target_long)&phys_ram_base);
+	tgen_arithr(s, ARITH_SUB, TCG_REG_ARGOS, TCG_REG_EAX);
+	tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1,
+			   (tcg_target_long)&argos_memmap);
+	tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, TCG_REG_EAX);
+	/*
+	 * offset of the tag is in %reg_argos, load the value
+	 * of the tag in %eax
+	 */
+	tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1, (tcg_target_long)&s->temps[arg].argos_tag);
+	tcg_out_st_notaint(s, type, TCG_REG_EAX, TCG_REG_ARGOS, 0);
+	tcg_out8(s, 0x58);	/* pop %eax */
+}
+
+static inline void tcg_out_streg(TCGContext *s, TCGType type, int arg,
+				 int arg1, tcg_target_long arg2)
+{
+	if (!argos_enabled) {
+		tcg_out_st_notaint(s, type, arg, arg1, arg2);
+		return;
+	}
+	if (arg1 == TCG_REG_ESP) {
+		/*
+		 * the native code stack does not point to guest memory,
+		 * it's mainly used to pass arguments to helpers
+		 */
+		tcg_out_st_notaint(s, type, arg, arg1, arg2);
+		return;
+	} else if (arg1 != TCG_AREG0) {
+		tcg_out_st(s, type, arg, arg1, arg2);
+		return;
+	}
+	tcg_out_st_notaint(s, type, arg, arg1, arg2);
+	if (arg2 >= (CPU_NB_REGS * sizeof(target_ulong))) {
+		/* XXX: not a write to a 'hard' guest register, ignore for now */
+		return;
+	}
+	tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[arg].argos_tag);
+	tcg_out_st_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
+}
+
+static inline void tcg_out_mov(TCGContext *s, TCGType type, int ret, int arg)
+{
+    if (arg != ret) {
+        int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+        tcg_out_modrm(s, opc, ret, arg);
+	if (argos_enabled) {
+		/* XXX: type matters! */
+		tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[arg].argos_tag);
+		tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+	}
     }
 }
 
@@ -560,20 +717,6 @@ static inline void tcg_out_push(TCGContext *s, int reg)
 static inline void tcg_out_pop(TCGContext *s, int reg)
 {
     tcg_out_opc(s, OPC_POP_r32 + LOWREGMASK(reg), 0, reg, 0);
-}
-
-static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
-                              int arg1, tcg_target_long arg2)
-{
-    int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
-    tcg_out_modrm_offset(s, opc, ret, arg1, arg2);
-}
-
-static inline void tcg_out_st(TCGContext *s, TCGType type, int arg,
-                              int arg1, tcg_target_long arg2)
-{
-    int opc = OPC_MOVL_EvGv + (type == TCG_TYPE_I64 ? P_REXW : 0);
-    tcg_out_modrm_offset(s, opc, arg, arg1, arg2);
 }
 
 static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
@@ -1429,6 +1572,13 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args,
 #endif
 }
 
+/* need these to take effect in the rest of tcg.c as well */
+#define tcg_out_ld(_state, _type, _reg, _memreg, _memoff)	\
+	tcg_out_ldreg(_state, _type, _reg, _memreg, _memoff)
+
+#define tcg_out_st(_state, _type, _reg, _memreg, _memoff)	\
+	tcg_out_streg(_state, _type, _reg, _memreg, _memoff)
+
 static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
                               const TCGArg *args, const int *const_args)
 {
@@ -1484,6 +1634,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
     case INDEX_op_movi_i32:
         tcg_out_movi(s, TCG_TYPE_I32, args[0], args[1]);
         break;
+	/* XXX: the following bunch of ops need argos love */
     OP_32_64(ld8u):
         /* Note that we can ignore REXW for the zero-extend to 64-bit.  */
         tcg_out_modrm_offset(s, OPC_MOVZBL, args[0], args[1], args[2]);
@@ -1979,6 +2130,15 @@ static void tcg_target_init(TCGContext *s)
 
     tcg_regset_clear(s->reserved_regs);
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_ESP);
+    /*
+     * Since we're holding the taint information for the register
+     * in memory (i.e. not in xmm regs), we'll need to copy
+     * from memory to memory at the tcg->native translation level.
+     * The easiest way to do that is to reserve a register to
+     * use as intermediate.
+     */
+    tcg_regset_set_reg(s->reserved_regs, TCG_REG_ARGOS);
 
     tcg_add_target_add_op_defs(x86_op_defs);
 }
+

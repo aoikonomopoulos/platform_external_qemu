@@ -45,6 +45,7 @@ enum {
     TCG_REG_EBP,
     TCG_REG_ESI,
     TCG_REG_EDI,
+    TCG_REG_ARGOS = TCG_REG_EDI,
 
     /* 64-bit registers; always define the symbols to avoid
        too much if-deffing.  */
