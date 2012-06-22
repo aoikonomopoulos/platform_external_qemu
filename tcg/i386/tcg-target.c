@@ -534,8 +534,8 @@ static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
     tcg_out_modrm(s, OPC_ARITH_GvEv + (subop << 3) + ext, dest, src);
 }
 
-static void tcg_out_movi(TCGContext *s, TCGType type,
-                         int ret, tcg_target_long arg)
+static void tcg_out_movi_notaint(TCGContext *s, TCGType type,
+				 int ret, tcg_target_long arg)
 {
     if (arg == 0) {
         tgen_arithr(s, ARITH_XOR, ret, ret);
@@ -572,6 +572,16 @@ static inline void tcg_out_ld_notaint(TCGContext *s, TCGType type, int ret,
 
 static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
                               int arg1, tcg_target_long arg2);
+
+static void tcg_out_movi(TCGContext *s, TCGType type,
+			 int ret, tcg_target_long arg)
+{
+    tcg_out_movi_notaint(s, type, ret, arg);
+    if (argos_enabled) {
+	    tcg_out_movi_notaint(s, type, TCG_REG_ARGOS, 0);
+	    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+    }
+}
 
 static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1, tcg_target_long arg2)
 {
