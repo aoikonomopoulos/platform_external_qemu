@@ -514,6 +514,16 @@ static inline void tcg_out_modrm_offset(TCGContext *s, int opc, int r,
     tcg_out_modrm_sib_offset(s, opc, r, rm, -1, 0, offset);
 }
 
+static inline void tcg_out_push(TCGContext *s, int reg)
+{
+    tcg_out_opc(s, OPC_PUSH_r32 + LOWREGMASK(reg), 0, reg, 0);
+}
+
+static inline void tcg_out_pop(TCGContext *s, int reg)
+{
+    tcg_out_opc(s, OPC_POP_r32 + LOWREGMASK(reg), 0, reg, 0);
+}
+
 /* Generate dest op= src.  Uses the same ARITH_* codes as tgen_arithi.  */
 static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
 {
@@ -581,6 +591,37 @@ static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1,
 	tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
 }
 
+enum loadstore {
+	IS_LOAD = 1,
+	IS_STORE,
+};
+
+/*
+ * Propagate taint for the 4-byte tag for the address stored in TCG_REG_ARGOS to the
+ * address of temptag. The loadstore parameter determines the direction.
+ */
+static inline void tcg_out_ldtag(TCGContext *s, TCGType type, tcg_target_long temptag, enum loadstore ls)
+{
+	/* the memory virtual address is in TCG_REG_ARGOS */
+	int scratch = TCG_REG_EAX;
+	tcg_out_push(s, scratch);
+	tcg_out_ld_notaint(s, type, scratch, -1, (tcg_target_long)&phys_ram_base);
+	tgen_arithr(s, ARITH_SUB, TCG_REG_ARGOS, scratch);
+	tcg_out_ld_notaint(s, type, scratch, -1,
+			   (tcg_target_long)&argos_memmap);
+	tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, scratch);
+
+	if (ls == IS_LOAD) {
+		tcg_out_ld_notaint(s, type, scratch, TCG_REG_ARGOS, 0);
+		/* store it to the tag of 'ret' */
+		tcg_out_st_notaint(s, type, scratch, -1, temptag);
+	} else {
+		tcg_out_ld_notaint(s, type, scratch, -1, temptag);
+		tcg_out_st_notaint(s, type, scratch, TCG_REG_ARGOS, 0);
+	}
+	tcg_out_pop(s, scratch);
+}
+
 static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
                               int arg1, tcg_target_long arg2)
 {
@@ -599,29 +640,8 @@ static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
      */
     tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
     tcg_out_ld_notaint(s, type, ret, arg1, arg2);
-    tcg_out8(s, 0x50);	/* push %eax */
-    tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1,
-		       (tcg_target_long)&phys_ram_base);
-    tgen_arithr(s, ARITH_SUB, TCG_REG_ARGOS, TCG_REG_EAX);
-    
-    /*
-     * Find the offset off the argos tag (XXX: assumes bytemap)
-     * XXX: can fold the add/sub
-     */
-    tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1,
-		       (tcg_target_long)&argos_memmap);
-    tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, TCG_REG_EAX);
-    
-    /*
-     * OK, we have the addres of the argos tag in %edi
-     * now load the value of the tag in %edi
-     */
-    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, TCG_REG_ARGOS, 0);
-    
-    /* store it to the tag of 'ret' */
-    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
-    
-    tcg_out8(s, 0x58);	/* pop %eax */
+
+    tcg_out_ldtag(s, type, (tcg_target_long)&s->temps[ret].argos_tag, IS_LOAD);
 }
 
 static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
@@ -640,19 +660,7 @@ static inline void tcg_out_st(TCGContext *s, TCGType type, int arg,
 	}
 	tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
 	tcg_out_st_notaint(s, type, arg, arg1, arg2);
-	tcg_out8(s, 0x50);	/* push %eax */
-	tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1, (tcg_target_long)&phys_ram_base);
-	tgen_arithr(s, ARITH_SUB, TCG_REG_ARGOS, TCG_REG_EAX);
-	tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1,
-			   (tcg_target_long)&argos_memmap);
-	tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, TCG_REG_EAX);
-	/*
-	 * offset of the tag is in %reg_argos, load the value
-	 * of the tag in %eax
-	 */
-	tcg_out_ld_notaint(s, type, TCG_REG_EAX, -1, (tcg_target_long)&s->temps[arg].argos_tag);
-	tcg_out_st_notaint(s, type, TCG_REG_EAX, TCG_REG_ARGOS, 0);
-	tcg_out8(s, 0x58);	/* pop %eax */
+	tcg_out_ldtag(s, type, (tcg_target_long)&s->temps[arg].argos_tag, IS_STORE);
 }
 
 static inline void tcg_out_streg(TCGContext *s, TCGType type, int arg,
@@ -706,16 +714,6 @@ static inline void tcg_out_pushi(TCGContext *s, tcg_target_long val)
     } else {
         tcg_abort();
     }
-}
-
-static inline void tcg_out_push(TCGContext *s, int reg)
-{
-    tcg_out_opc(s, OPC_PUSH_r32 + LOWREGMASK(reg), 0, reg, 0);
-}
-
-static inline void tcg_out_pop(TCGContext *s, int reg)
-{
-    tcg_out_opc(s, OPC_POP_r32 + LOWREGMASK(reg), 0, reg, 0);
 }
 
 static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
