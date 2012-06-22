@@ -612,15 +612,14 @@ static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
 		       (tcg_target_long)&argos_memmap);
     tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, TCG_REG_EAX);
     
-    tcg_out8(s, 0x97);	/* xchg %eax, %edi */
     /*
-     * OK, we have the offset of the argos tag in %rax,
-     * now load the value of the tag in %al
+     * OK, we have the addres of the argos tag in %edi
+     * now load the value of the tag in %edi
      */
-    tcg_out8(s, 0x8b); tcg_out8(s, 0x00);	/* mov (%eax), %eax */
+    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, TCG_REG_ARGOS, 0);
     
     /* store it to the tag of 'ret' */
-    tcg_out_st_notaint(s, type, TCG_REG_EAX, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
     
     tcg_out8(s, 0x58);	/* pop %eax */
 }
