@@ -1512,13 +1512,7 @@ void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
             break;
 	case 3: {	/* set tag at the address held in val */
 		argos_rtag_t tag = op2;
-		FILE *fp;
-		fp = fopen("/tmp/set_cp15.log", "a");
-		setbuf(fp, NULL);
-
 		argos_memmap_stb(vtop(env, val), &tag);
-		fprintf(fp, "value: %#x\n", val);
-		fclose(fp);
 		break;
 	}
 	case 4:
