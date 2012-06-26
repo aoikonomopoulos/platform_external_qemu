@@ -32,6 +32,9 @@ int argos_enabled;
 typedef void CPUWriteMemoryFunc(void *opaque, target_phys_addr_t addr, uint32_t value);
 typedef uint32_t CPUReadMemoryFunc(void *opaque, target_phys_addr_t addr);
 
+typedef void CPUWriteMemoryFuncWithTag(void *opaque, target_phys_addr_t addr, uint32_t value, argos_rtag_t *);
+typedef uint32_t CPUReadMemoryFuncWithTag(void *opaque, target_phys_addr_t addr, argos_rtag_t *);
+
 void cpu_register_physical_memory_log(target_phys_addr_t start_addr,
                                          ram_addr_t size,
                                          ram_addr_t phys_offset,

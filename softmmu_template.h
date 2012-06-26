@@ -82,14 +82,14 @@ static inline DATA_TYPE glue(io_read, SUFFIX)(target_phys_addr_t physaddr,
     env->mem_io_vaddr = addr;
     /* XXX: propagate argos tag */
 #if SHIFT <= 2
-    res = io_mem_read[index][SHIFT](io_mem_opaque[index], physaddr);
+    res = ((CPUReadMemoryFuncWithTag *)(io_mem_read[index][SHIFT]))(io_mem_opaque[index], physaddr, tag);
 #else
 #ifdef TARGET_WORDS_BIGENDIAN
-    res = (uint64_t)io_mem_read[index][2](io_mem_opaque[index], physaddr) << 32;
-    res |= io_mem_read[index][2](io_mem_opaque[index], physaddr + 4);
+    res = (uint64_t)((CPUReadMemoryFuncWithTag *)io_mem_read[index][2])(io_mem_opaque[index], physaddr, tag) << 32;
+    res |= ((CPUReadMemoryFuncWithTag)io_mem_read[index][2])(io_mem_opaque[index], physaddr + 4);
 #else
-    res = io_mem_read[index][2](io_mem_opaque[index], physaddr);
-    res |= (uint64_t)io_mem_read[index][2](io_mem_opaque[index], physaddr + 4) << 32;
+    res = ((CPUReadMemoryFuncWithTag *)io_mem_read[index][2])(io_mem_opaque[index], physaddr, tag);
+    res |= (uint64_t)((CPUReadMemoryFuncWithTag *)io_mem_read[index][2])(io_mem_opaque[index], physaddr + 4, tag) << 32;
 #endif
 #endif /* SHIFT > 2 */
     return res;
@@ -160,7 +160,7 @@ DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
 #endif
             addend = env->tlb_table[mmu_idx][index].addend;
             res = glue(glue(ld, USUFFIX), _raw)((uint8_t *)(long)(addr+addend));
-	    glue(argos_memmap_, glue(ld, SUFFIX))((unsigned long)(addr+addend), tag);
+	    glue(argos_memmap_, glue(ld, SUFFIX))((unsigned long)(addr+addend) - (unsigned long)phys_ram_base, tag);
         }
 #ifdef CONFIG_MEMCHECK_MMU
         if (invalidate_cache) {
@@ -230,7 +230,7 @@ static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
             /* unaligned/aligned access in the same page */
             addend = env->tlb_table[mmu_idx][index].addend;
             res = glue(glue(ld, USUFFIX), _raw)((uint8_t *)(long)(addr+addend));
-	    glue(argos_memmap_, glue(ld, SUFFIX))((unsigned long)(addr+addend), tag);
+	    glue(argos_memmap_, glue(ld, SUFFIX))((unsigned long)(addr+addend) - (unsigned long)phys_ram_base, tag);
         }
     } else {
         /* the page is not in the TLB : fill it */
