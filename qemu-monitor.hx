@@ -291,6 +291,15 @@ Dump 80 16 bit values at the start of the video memory.
 @end itemize
 ETEXI
 
+    { "xt", "lis", do_memmap_dump,
+      "addr size path", "taint map dump starting at 'addr'", },
+STEXI
+@item xp @var{addr} @var{size} @var{path}
+Dump tainted memory starting at @var{addr} for a region starting at @var{addr} and
+continuing for @var{size} bytes. Writes to @var{path} or stdout if @var{path} is the
+empty string.
+ETEXI
+
     { "p|print", "/l", do_print,
       "/fmt expr", "print expression value (use $reg for CPU register access)", },
 STEXI

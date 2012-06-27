@@ -45,6 +45,8 @@
 #include "kvm.h"
 #include "acl.h"
 #include "exec-all.h"
+#include "hexdump.h"
+#include "argos/argos-memmap.h"
 
 //#define DEBUG
 //#define DEBUG_COMPLETION
@@ -886,6 +888,64 @@ static void do_physical_memory_save(Monitor *mon, unsigned int valh,
         size -= l;
     }
     fclose(f);
+}
+
+extern uint8_t *phys_ram_base;
+static void do_memmap_dump(Monitor *mon, unsigned int valh, unsigned int vall,
+                           uint32_t size, const char *filename)
+{
+    FILE *f = stdout;
+    target_phys_addr_t addr = GET_TPHYSADDR(valh, vall);
+    int i;
+    int intaint = 0;
+    int taintoffset;
+
+    const char *colors[256];
+    char *red    = "\033[1;31m",
+	     *dark   = "\033[1;30m";
+
+    colors[0] = dark;
+    for(i=1; i<256; i++)
+        colors[i] = red;
+    if(filename && filename[0] != 0) {
+        if(!(f = fopen(filename, "w"))) {
+            monitor_printf(mon,"could not open %s.\n", filename);
+            return;
+        }
+    }
+    if(size == 0 && addr < ram_size) {
+        size = ram_size - addr;
+    }
+    if((addr > ram_size) || ((addr + size) >ram_size)) {
+        monitor_printf(mon, "address out of bounds: %#llx. "
+                            "valid range: 0x0 - %#lx", (unsigned long long)addr,
+                            (unsigned long)ram_size);
+        return;
+    }
+
+    intaint = 0;
+    for(i = addr; i < addr+size; i++) {
+        if(argos_memmap_istainted(i)) {
+            if(intaint == 0){
+                taintoffset = i;
+            }
+            intaint = 1;
+        } else {
+            if(intaint !=0) {
+                int print_start, print_size;
+                const int rows_before = 3, rows_after = 3, row_size = 1 << 4;
+                print_start = (taintoffset - rows_before * row_size) &
+                               ~(row_size - 1);
+                print_size = i - taintoffset;
+                print_size = (print_size / row_size + rows_before + rows_after)
+                              * (1 << 4);
+                printf("< ... >\n");
+                hexdump(f, &phys_ram_base[print_start],print_size, print_start, 1,NULL,
+                        &((char*)argos_memmap)[print_start],colors);
+            }
+            intaint = 0;
+        }
+    }
 }
 
 static void do_sum(Monitor *mon, uint32_t start, uint32_t size)

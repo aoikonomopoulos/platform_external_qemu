@@ -334,6 +334,7 @@ LOCAL_SRC_FILES := \
     keymaps.c \
     loader.c \
     monitor.c \
+    hexdump.c \
     qemu-timer.c \
     qemu-timer-common.c \
     user-events-qemu.c \
@@ -416,6 +417,7 @@ common_LOCAL_SRC_FILES := \
     keymaps.c \
     loader.c \
     monitor.c \
+    hexdump.c \
     qemu-timer.c \
     qemu-timer-common.c \
     user-events-qemu.c \
