@@ -2449,6 +2449,13 @@ QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename)
     }
     if (strstart(filename, "tcp:", &p) ||
         strstart(filename, "telnet:", &p)) {
+        char fd[64];
+        memset(fd, 0, sizeof(fd));
+        if(sscanf(p, "socket=%s", &fd[0]) == 1) {
+            qemu_opt_set(opts, "backend", "socket");
+            qemu_opt_set(opts, "socket", fd);
+            return opts;
+        }
         if (sscanf(p, "%64[^:]:%32[^,]%n", host, port, &pos) < 2) {
             host[0] = 0;
             if (sscanf(p, ":%32[^,]%n", port, &pos) < 1)
