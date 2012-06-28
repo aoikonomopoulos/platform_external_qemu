@@ -34,6 +34,7 @@
 #define GEN_HELPER 1
 #include "helper.h"
 
+
 #define ENABLE_ARCH_4T    arm_feature(env, ARM_FEATURE_V4T)
 #define ENABLE_ARCH_5     arm_feature(env, ARM_FEATURE_V5)
 /* currently all emulated v5 cores are also v5TE, so don't bother */
@@ -6436,7 +6437,7 @@ static void disas_arm_insn(CPUState * env, DisasContext *s)
     TCGv addr;
     TCGv_i64 tmp64;
 
-    insn = ldl_code(s->pc);
+    insn = ldl_code_notaint(s->pc);
 
     ANDROID_WATCH_CALLSTACK_ARM(s);
 
@@ -7846,7 +7847,7 @@ static int disas_thumb2_insn(CPUState *env, DisasContext *s, uint16_t insn_hw1)
         /* Fall through to 32-bit decode.  */
     }
 
-    insn = lduw_code(s->pc);
+    insn = lduw_code_notaint(s->pc);
     ANDROID_TRACE_START_THUMB();
     s->pc += 2;
     insn |= (uint32_t)insn_hw1 << 16;
@@ -8879,7 +8880,7 @@ static void disas_thumb_insn(CPUState *env, DisasContext *s)
         }
     }
 
-    insn = lduw_code(s->pc);
+    insn = lduw_code_notaint(s->pc);
 
     ANDROID_WATCH_CALLSTACK_THUMB(s);
 

@@ -16,6 +16,8 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
+
+#include <argos/argos-memmap.h>
 #if DATA_SIZE == 8
 #define SUFFIX q
 #define USUFFIX q
@@ -79,7 +81,7 @@
 
 /* generic load/store macros */
 
-static inline RES_TYPE glue(glue(ld, USUFFIX), MEMSUFFIX)(target_ulong ptr)
+static inline RES_TYPE glue(glue(ld, USUFFIX), MEMSUFFIX)(target_ulong ptr, argos_rtag_t *tag)
 {
     int page_index;
     RES_TYPE res;
@@ -92,16 +94,17 @@ static inline RES_TYPE glue(glue(ld, USUFFIX), MEMSUFFIX)(target_ulong ptr)
     mmu_idx = CPU_MMU_INDEX;
     if (unlikely(env->tlb_table[mmu_idx][page_index].ADDR_READ !=
                  (addr & (TARGET_PAGE_MASK | (DATA_SIZE - 1))))) {
-        res = glue(glue(__ld, SUFFIX), MMUSUFFIX)(addr, mmu_idx);
+        res = glue(glue(__ld, SUFFIX), MMUSUFFIX)(addr, mmu_idx, tag);
     } else {
         physaddr = addr + env->tlb_table[mmu_idx][page_index].addend;
+	glue(argos_memmap_, glue(ld, SUFFIX))(physaddr - (unsigned long)phys_ram_base, tag);
         res = glue(glue(ld, USUFFIX), _raw)((uint8_t *)physaddr);
     }
     return res;
 }
 
 #if DATA_SIZE <= 2
-static inline int glue(glue(lds, SUFFIX), MEMSUFFIX)(target_ulong ptr)
+static inline int glue(glue(lds, SUFFIX), MEMSUFFIX)(target_ulong ptr, argos_rtag_t *tag)
 {
     int res, page_index;
     target_ulong addr;
@@ -113,9 +116,10 @@ static inline int glue(glue(lds, SUFFIX), MEMSUFFIX)(target_ulong ptr)
     mmu_idx = CPU_MMU_INDEX;
     if (unlikely(env->tlb_table[mmu_idx][page_index].ADDR_READ !=
                  (addr & (TARGET_PAGE_MASK | (DATA_SIZE - 1))))) {
-        res = (DATA_STYPE)glue(glue(__ld, SUFFIX), MMUSUFFIX)(addr, mmu_idx);
+        res = (DATA_STYPE)glue(glue(__ld, SUFFIX), MMUSUFFIX)(addr, mmu_idx, tag);
     } else {
         physaddr = addr + env->tlb_table[mmu_idx][page_index].addend;
+	glue(argos_memmap_, glue(ld, SUFFIX))(physaddr - (unsigned long)phys_ram_base, tag);
         res = glue(glue(lds, SUFFIX), _raw)((uint8_t *)physaddr);
     }
     return res;
@@ -126,7 +130,7 @@ static inline int glue(glue(lds, SUFFIX), MEMSUFFIX)(target_ulong ptr)
 
 /* generic store macro */
 
-static inline void glue(glue(st, SUFFIX), MEMSUFFIX)(target_ulong ptr, RES_TYPE v)
+static inline void glue(glue(st, SUFFIX), MEMSUFFIX)(target_ulong ptr, RES_TYPE v, argos_rtag_t *tag)
 {
     int page_index;
     target_ulong addr;
@@ -138,9 +142,10 @@ static inline void glue(glue(st, SUFFIX), MEMSUFFIX)(target_ulong ptr, RES_TYPE 
     mmu_idx = CPU_MMU_INDEX;
     if (unlikely(env->tlb_table[mmu_idx][page_index].addr_write !=
                  (addr & (TARGET_PAGE_MASK | (DATA_SIZE - 1))))) {
-        glue(glue(__st, SUFFIX), MMUSUFFIX)(addr, v, mmu_idx);
+        glue(glue(__st, SUFFIX), MMUSUFFIX)(addr, v, mmu_idx, tag);
     } else {
         physaddr = addr + env->tlb_table[mmu_idx][page_index].addend;
+	glue(argos_memmap_, glue(st, SUFFIX))(physaddr - (unsigned long)phys_ram_base, tag);
         glue(glue(st, SUFFIX), _raw)((uint8_t *)physaddr, v);
     }
 }
@@ -150,46 +155,46 @@ static inline void glue(glue(st, SUFFIX), MEMSUFFIX)(target_ulong ptr, RES_TYPE 
 #if ACCESS_TYPE != (NB_MMU_MODES + 1)
 
 #if DATA_SIZE == 8
-static inline float64 glue(ldfq, MEMSUFFIX)(target_ulong ptr)
+static inline float64 glue(ldfq, MEMSUFFIX)(target_ulong ptr, argos_rtag_t *tag)
 {
     union {
         float64 d;
         uint64_t i;
     } u;
-    u.i = glue(ldq, MEMSUFFIX)(ptr);
+    u.i = glue(ldq, MEMSUFFIX)(ptr, tag);
     return u.d;
 }
 
-static inline void glue(stfq, MEMSUFFIX)(target_ulong ptr, float64 v)
+static inline void glue(stfq, MEMSUFFIX)(target_ulong ptr, float64 v, argos_rtag_t *tag)
 {
     union {
         float64 d;
         uint64_t i;
     } u;
     u.d = v;
-    glue(stq, MEMSUFFIX)(ptr, u.i);
+    glue(stq, MEMSUFFIX)(ptr, u.i, tag);
 }
 #endif /* DATA_SIZE == 8 */
 
 #if DATA_SIZE == 4
-static inline float32 glue(ldfl, MEMSUFFIX)(target_ulong ptr)
+static inline float32 glue(ldfl, MEMSUFFIX)(target_ulong ptr, argos_rtag_t *tag)
 {
     union {
         float32 f;
         uint32_t i;
     } u;
-    u.i = glue(ldl, MEMSUFFIX)(ptr);
+    u.i = glue(ldl, MEMSUFFIX)(ptr, tag);
     return u.f;
 }
 
-static inline void glue(stfl, MEMSUFFIX)(target_ulong ptr, float32 v)
+static inline void glue(stfl, MEMSUFFIX)(target_ulong ptr, float32 v, argos_rtag_t *tag)
 {
     union {
         float32 f;
         uint32_t i;
     } u;
     u.f = v;
-    glue(stl, MEMSUFFIX)(ptr, u.i);
+    glue(stl, MEMSUFFIX)(ptr, u.i, tag);
 }
 #endif /* DATA_SIZE == 4 */
 

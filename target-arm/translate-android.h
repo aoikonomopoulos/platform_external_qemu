@@ -104,7 +104,7 @@ is_thumb_bl_or_blx(uint16_t insn, target_ulong pc, target_ulong* ret_off)
         return 1;
     } else if ((insn & 0xF800) == 0xF000) {     // THUMB BL(X)(imm)
         // This is a 32-bit THUMB. Get the second half of the instuction.
-        insn = lduw_code(pc + 2);
+        insn = lduw_code_notaint(pc + 2);
         if ((insn & 0xC000) == 0xC000) {
             *ret_off = 4;
             return 1;

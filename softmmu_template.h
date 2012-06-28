@@ -64,10 +64,10 @@
 
 static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
                                                         int mmu_idx,
-                                                        void *retaddr);
+                                                        void *retaddr, argos_rtag_t *tag);
 static inline DATA_TYPE glue(io_read, SUFFIX)(target_phys_addr_t physaddr,
                                               target_ulong addr,
-                                              void *retaddr)
+                                              void *retaddr, argos_rtag_t *tag)
 {
     DATA_TYPE res;
     int index;
@@ -80,6 +80,7 @@ static inline DATA_TYPE glue(io_read, SUFFIX)(target_phys_addr_t physaddr,
     }
 
     env->mem_io_vaddr = addr;
+    /* XXX: propagate argos tag */
 #if SHIFT <= 2
     res = io_mem_read[index][SHIFT](io_mem_opaque[index], physaddr);
 #else
@@ -96,7 +97,7 @@ static inline DATA_TYPE glue(io_read, SUFFIX)(target_phys_addr_t physaddr,
 
 /* handle all cases except unaligned access which span two pages */
 DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
-                                                      int mmu_idx)
+                                                      int mmu_idx, argos_rtag_t *tag)
 {
     DATA_TYPE res;
     int index;
@@ -120,7 +121,7 @@ DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
                 goto do_unaligned_access;
             retaddr = GETPC();
             ioaddr = env->iotlb[mmu_idx][index];
-            res = glue(io_read, SUFFIX)(ioaddr, addr, retaddr);
+            res = glue(io_read, SUFFIX)(ioaddr, addr, retaddr, tag);
         } else if (((addr & ~TARGET_PAGE_MASK) + DATA_SIZE - 1) >= TARGET_PAGE_SIZE) {
             /* This is not I/O access: do access verification. */
 #ifdef CONFIG_MEMCHECK_MMU
@@ -140,7 +141,7 @@ DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
             do_unaligned_access(addr, READ_ACCESS_TYPE, mmu_idx, retaddr);
 #endif
             res = glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(addr,
-                                                         mmu_idx, retaddr);
+                                                         mmu_idx, retaddr, tag);
         } else {
 #ifdef CONFIG_MEMCHECK_MMU
             /* We only validate access to the guest's user space, for which
@@ -159,6 +160,7 @@ DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
 #endif
             addend = env->tlb_table[mmu_idx][index].addend;
             res = glue(glue(ld, USUFFIX), _raw)((uint8_t *)(long)(addr+addend));
+	    glue(argos_memmap_, glue(ld, SUFFIX))((unsigned long)(addr+addend), tag);
         }
 #ifdef CONFIG_MEMCHECK_MMU
         if (invalidate_cache) {
@@ -190,7 +192,7 @@ DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
 /* handle all unaligned cases */
 static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
                                                         int mmu_idx,
-                                                        void *retaddr)
+                                                        void *retaddr, argos_rtag_t *tag)
 {
     DATA_TYPE res, res1, res2;
     int index, shift;
@@ -207,16 +209,16 @@ static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
             if ((addr & (DATA_SIZE - 1)) != 0)
                 goto do_unaligned_access;
             ioaddr = env->iotlb[mmu_idx][index];
-            res = glue(io_read, SUFFIX)(ioaddr, addr, retaddr);
+            res = glue(io_read, SUFFIX)(ioaddr, addr, retaddr, tag);
         } else if (((addr & ~TARGET_PAGE_MASK) + DATA_SIZE - 1) >= TARGET_PAGE_SIZE) {
         do_unaligned_access:
             /* slow unaligned access (it spans two pages) */
             addr1 = addr & ~(DATA_SIZE - 1);
             addr2 = addr1 + DATA_SIZE;
             res1 = glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(addr1,
-                                                          mmu_idx, retaddr);
+                                                          mmu_idx, retaddr, tag);
             res2 = glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(addr2,
-                                                          mmu_idx, retaddr);
+                                                          mmu_idx, retaddr, tag);
             shift = (addr & (DATA_SIZE - 1)) * 8;
 #ifdef TARGET_WORDS_BIGENDIAN
             res = (res1 << shift) | (res2 >> ((DATA_SIZE * 8) - shift));
@@ -228,6 +230,7 @@ static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
             /* unaligned/aligned access in the same page */
             addend = env->tlb_table[mmu_idx][index].addend;
             res = glue(glue(ld, USUFFIX), _raw)((uint8_t *)(long)(addr+addend));
+	    glue(argos_memmap_, glue(ld, SUFFIX))((unsigned long)(addr+addend), tag);
         }
     } else {
         /* the page is not in the TLB : fill it */
@@ -274,7 +277,7 @@ static inline void glue(io_write, SUFFIX)(target_phys_addr_t physaddr,
 
 void REGPARM glue(glue(__st, SUFFIX), MMUSUFFIX)(target_ulong addr,
                                                  DATA_TYPE val,
-                                                 int mmu_idx)
+                                                 int mmu_idx, argos_rtag_t *tag)
 {
     target_phys_addr_t ioaddr;
     unsigned long addend;

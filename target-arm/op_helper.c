@@ -469,6 +469,8 @@ uint32_t HELPER(ror_cc)(uint32_t x, uint32_t i)
 
 void HELPER(neon_vldst_all)(uint32_t insn)
 {
+    /* XXX: implement for real */
+    static argos_rtag_t _argos_dummy_tag;
 #if defined(CONFIG_USER_ONLY)
 #define LDB(addr) ldub(addr)
 #define LDW(addr) lduw(addr)
@@ -480,10 +482,10 @@ void HELPER(neon_vldst_all)(uint32_t insn)
 #define STQ(addr, val) stq(addr, val)
 #else
     int user = cpu_mmu_index(env);
-#define LDB(addr) slow_ldb_mmu(addr, user, GETPC())
-#define LDW(addr) slow_ldw_mmu(addr, user, GETPC())
-#define LDL(addr) slow_ldl_mmu(addr, user, GETPC())
-#define LDQ(addr) slow_ldq_mmu(addr, user, GETPC())
+#define LDB(addr) slow_ldb_mmu(addr, user, GETPC(), &_argos_dummy_tag)
+#define LDW(addr) slow_ldw_mmu(addr, user, GETPC(), &_argos_dummy_tag)
+#define LDL(addr) slow_ldl_mmu(addr, user, GETPC(), &_argos_dummy_tag)
+#define LDQ(addr) slow_ldq_mmu(addr, user, GETPC(), &_argos_dummy_tag)
 #define STB(addr, val) slow_stb_mmu(addr, val, user, GETPC())
 #define STW(addr, val) slow_stw_mmu(addr, val, user, GETPC())
 #define STL(addr, val) slow_stl_mmu(addr, val, user, GETPC())

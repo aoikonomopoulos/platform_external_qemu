@@ -1360,8 +1360,10 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args,
         tcg_out_mov(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx++],
                     args[addrlo_idx + 1]);
     }
-    tcg_out_movi(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx],
+    tcg_out_movi(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx++],
                  mem_index);
+    tcg_out_movi(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx],
+		 (tcg_target_long)tag_for_reg(s, data_reg));
     tcg_out_calli(s, (tcg_target_long)qemu_ld_helpers[s_bits]);
 
     switch(opc) {

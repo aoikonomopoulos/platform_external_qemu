@@ -395,7 +395,7 @@ static inline target_ulong get_phys_addr_code(CPUState *env1, target_ulong addr)
     mmu_idx = cpu_mmu_index(env1);
     if (unlikely(env1->tlb_table[mmu_idx][page_index].addr_code !=
                  (addr & TARGET_PAGE_MASK))) {
-        ldub_code(addr);
+        ldub_code_notaint(addr);
     }
     pd = env1->tlb_table[mmu_idx][page_index].addr_code & ~TARGET_PAGE_MASK;
     if (pd > IO_MEM_ROM && !(pd & IO_MEM_ROMD)) {
