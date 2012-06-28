@@ -940,7 +940,7 @@ static void do_memmap_dump(Monitor *mon, unsigned int valh, unsigned int vall,
                 print_size = i - taintoffset;
                 print_size = (print_size / row_size + rows_before + rows_after)
                               * (1 << 4);
-                printf("< ... >\n");
+                fprintf(f, "< ... >\n");
                 hexdump(f, &phys_ram_base[print_start],print_size, print_start, 1,NULL,
                         &((char*)argos_memmap)[print_start],colors);
             }
