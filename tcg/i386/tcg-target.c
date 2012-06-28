@@ -525,7 +525,7 @@ static inline void tcg_out_pop(TCGContext *s, int reg)
 }
 
 /* Generate dest op= src.  Uses the same ARITH_* codes as tgen_arithi.  */
-static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
+static inline void tgen_arithr_notaint(TCGContext *s, int subop, int dest, int src)
 {
     /* Propagate an opcode prefix, such as P_REXW.  */
     int ext = subop & ~0x7;
@@ -538,7 +538,7 @@ static void tcg_out_movi_notaint(TCGContext *s, TCGType type,
 				 int ret, tcg_target_long arg)
 {
     if (arg == 0) {
-        tgen_arithr(s, ARITH_XOR, ret, ret);
+        tgen_arithr_notaint(s, ARITH_XOR, ret, ret);
         return;
     } else if (arg == (uint32_t)arg || type == TCG_TYPE_I32) {
         tcg_out_opc(s, OPC_MOVL_Iv + LOWREGMASK(ret), 0, ret, 0);
@@ -591,6 +591,16 @@ tag_for_reg(TCGContext *s, int reg, const char *func, const char *file, int l)
 
 #define tag_for_reg(_s, _reg) tag_for_reg(_s, _reg, __func__, __FILE__, __LINE__)
 
+/* Generate dest op= src.  Uses the same ARITH_* codes as tgen_arithi.  */
+static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
+{
+    argos_rtag_t *tag = tag_for_reg(s, dest);
+    tgen_arithr_notaint(s, subop, dest, src);
+    /* unconditionally clear the tag for the destination register */
+    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+}
+
 static void tcg_out_movi(TCGContext *s, TCGType type,
 			 int ret, tcg_target_long arg)
 {
@@ -636,10 +646,10 @@ static inline void tcg_out_ldtag(TCGContext *s, TCGType type, tcg_target_long te
     int scratch = TCG_REG_EAX;
     tcg_out_push(s, scratch);
     tcg_out_ld_notaint(s, type, scratch, -1, (tcg_target_long)&phys_ram_base);
-    tgen_arithr(s, ARITH_SUB, TCG_REG_ARGOS, scratch);
+    tgen_arithr_notaint(s, ARITH_SUB, TCG_REG_ARGOS, scratch);
     tcg_out_ld_notaint(s, type, scratch, -1,
 		       (tcg_target_long)&argos_memmap);
-    tgen_arithr(s, ARITH_ADD, TCG_REG_ARGOS, scratch);
+    tgen_arithr_notaint(s, ARITH_ADD, TCG_REG_ARGOS, scratch);
 
     if (ls == IS_LOAD) {
 	    tcg_out_ld_notaint(s, type, scratch, TCG_REG_ARGOS, 0);
@@ -820,12 +830,20 @@ static inline void tcg_out_bswap64(TCGContext *s, int reg)
 static void tgen_arithi(TCGContext *s, int c, int r0,
                         tcg_target_long val, int cf)
 {
+    argos_rtag_t *tag = tag_for_reg(s, r0);
     int rexw = 0;
 
     if (TCG_TARGET_REG_BITS == 64) {
         rexw = c & -8;
         c &= 7;
     }
+
+    /*
+     * unconditionally clear the tag for the destination register
+     * XXX: needs to be conditional on the arithmetic operation
+     */
+    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
 
     /* ??? While INC is 2 bytes shorter than ADDL $1, they also induce
        partial flags update stalls on Pentium4 and are not recommended
@@ -1709,6 +1727,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         /* For 3-operand addition, use LEA.  */
         if (args[0] != args[1]) {
             TCGArg a0 = args[0], a1 = args[1], a2 = args[2], c3 = 0;
+	    argos_rtag_t *tag;
 
             if (const_args[2]) {
                 c3 = a2, a2 = -1;
@@ -1718,8 +1737,11 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
                 tgen_arithr(s, ARITH_ADD + rexw, a0, a1);
                 break;
             }
-
+	    tag = tag_for_reg(s, a0);
             tcg_out_modrm_sib_offset(s, OPC_LEA + rexw, a0, a1, a2, 0, c3);
+	    /* unconditionally clear the tag for the destination register */
+	    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+	    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
             break;
         }
         c = ARITH_ADD;
