@@ -573,20 +573,40 @@ static inline void tcg_out_ld_notaint(TCGContext *s, TCGType type, int ret,
 static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
                               int arg1, tcg_target_long arg2);
 
+static argos_rtag_t native_reg_tags[CPU_NB_REGS];
+static inline argos_rtag_t *
+tag_for_reg(TCGContext *s, int reg, const char *func, const char *file, int l)
+{
+	if (reg < 0) {
+		fprintf(stderr, "reg (%d) < 0\n", reg);
+		abort();
+	}
+	if (reg >= CPU_NB_REGS) {
+		fprintf(stderr, "reg (%d) >= %d\n", reg, CPU_NB_REGS);
+		abort();
+	}
+
+	return &native_reg_tags[reg];
+}
+
+#define tag_for_reg(_s, _reg) tag_for_reg(_s, _reg, __func__, __FILE__, __LINE__)
+
 static void tcg_out_movi(TCGContext *s, TCGType type,
 			 int ret, tcg_target_long arg)
 {
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
     tcg_out_movi_notaint(s, type, ret, arg);
-    if (argos_enabled) {
+    if (argos_enabled && (tag_ret != NULL)) {
 	    tcg_out_movi_notaint(s, type, TCG_REG_ARGOS, 0);
-	    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+	    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
     }
 }
 
 static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1, tcg_target_long arg2)
 {
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
     tcg_out_ld_notaint(s, type, ret, arg1, arg2);
-    if (!argos_enabled) {
+    if (!argos_enabled || (!tag_ret)) {
 	    return;
     }
 
@@ -598,7 +618,7 @@ static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1,
 	    return;
     }
     tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
-    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
 }
 
 enum loadstore {
@@ -635,7 +655,8 @@ static inline void tcg_out_ldtag(TCGContext *s, TCGType type, tcg_target_long te
 static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
                               int arg1, tcg_target_long arg2)
 {
-    if (!argos_enabled) {
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
+    if (!argos_enabled || !tag_ret) {
         tcg_out_ld_notaint(s, type, ret, arg1, arg2);
 	return;
     }
@@ -651,7 +672,7 @@ static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
     tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
     tcg_out_ld_notaint(s, type, ret, arg1, arg2);
 
-    tcg_out_ldtag(s, type, (tcg_target_long)&s->temps[ret].argos_tag, IS_LOAD);
+    tcg_out_ldtag(s, type, (tcg_target_long)tag_ret, IS_LOAD);
 }
 
 static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
@@ -664,19 +685,21 @@ static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
 static inline void tcg_out_st(TCGContext *s, TCGType type, int arg,
                               int arg1, tcg_target_long arg2)
 {
-    if (!argos_enabled) {
+    argos_rtag_t *tag_arg = tag_for_reg(s, arg);
+    if (!argos_enabled || !tag_arg) {
 	    tcg_out_st_notaint(s, type, arg, arg1, arg2);
 	    return;
     }
     tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
     tcg_out_st_notaint(s, type, arg, arg1, arg2);
-    tcg_out_ldtag(s, type, (tcg_target_long)&s->temps[arg].argos_tag, IS_STORE);
+    tcg_out_ldtag(s, type, (tcg_target_long)tag_arg, IS_STORE);
 }
 
 static inline void tcg_out_streg(TCGContext *s, TCGType type, int arg,
 				 int arg1, tcg_target_long arg2)
 {
-    if (!argos_enabled) {
+    argos_rtag_t *tag_arg = tag_for_reg(s, arg);
+    if (!argos_enabled || !tag_arg) {
 	    tcg_out_st_notaint(s, type, arg, arg1, arg2);
 	    return;
     }
@@ -696,19 +719,21 @@ static inline void tcg_out_streg(TCGContext *s, TCGType type, int arg,
 	    /* XXX: not a write to a 'hard' guest register, ignore for now */
 	    return;
     }
-    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[arg].argos_tag);
+    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
     tcg_out_st_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
 }
 
 static inline void tcg_out_mov(TCGContext *s, TCGType type, int ret, int arg)
 {
+    argos_rtag_t *tag_arg = tag_for_reg(s, arg);
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
     if (arg != ret) {
         int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
         tcg_out_modrm(s, opc, ret, arg);
-	if (argos_enabled) {
+	if (argos_enabled && tag_ret && tag_arg) {
 		/* XXX: type matters! */
-		tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[arg].argos_tag);
-		tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)&s->temps[ret].argos_tag);
+		tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
+		tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
 	}
     }
 }
