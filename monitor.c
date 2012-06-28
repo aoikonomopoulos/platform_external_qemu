@@ -907,12 +907,6 @@ static void do_memmap_dump(Monitor *mon, unsigned int valh, unsigned int vall,
     colors[0] = dark;
     for(i=1; i<256; i++)
         colors[i] = red;
-    if(filename && filename[0] != 0) {
-        if(!(f = fopen(filename, "w"))) {
-            monitor_printf(mon,"could not open %s.\n", filename);
-            return;
-        }
-    }
     if(size == 0 && addr < ram_size) {
         size = ram_size - addr;
     }
@@ -921,6 +915,13 @@ static void do_memmap_dump(Monitor *mon, unsigned int valh, unsigned int vall,
                             "valid range: 0x0 - %#lx", (unsigned long long)addr,
                             (unsigned long)ram_size);
         return;
+    }
+
+    if(filename && filename[0] != 0) {
+        if(!(f = fopen(filename, "w"))) {
+            monitor_printf(mon,"could not open %s.\n", filename);
+            return;
+        }
     }
 
     intaint = 0;
@@ -946,6 +947,8 @@ static void do_memmap_dump(Monitor *mon, unsigned int valh, unsigned int vall,
             intaint = 0;
         }
     }
+    if (f != stdout)
+	fclose(f);
 }
 
 static void do_sum(Monitor *mon, uint32_t start, uint32_t size)
