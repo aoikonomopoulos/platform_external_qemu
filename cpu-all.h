@@ -718,7 +718,7 @@ extern unsigned long reserved_va;
 #define stfq_user_notaint(p, vt) stfq_user(p, vt, &_argos_dummy_tag)
 
 
-static argos_rtag_t _argos_dummy_tag;
+extern argos_rtag_t _argos_dummy_tag;
 
 #if defined(CONFIG_USER_ONLY)
 

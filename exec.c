@@ -124,6 +124,7 @@ RAMList ram_list = { .blocks = QLIST_HEAD_INITIALIZER(ram_list) };
 
 /* shadow map for taint tracking */
 argos_memmap_t *argos_memmap;
+argos_rtag_t _argos_dummy_tag;
 int argos_enabled = !0;
 #endif
 
