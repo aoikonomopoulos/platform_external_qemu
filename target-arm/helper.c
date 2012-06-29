@@ -1410,33 +1410,10 @@ void HELPER(check_pc_taint)(CPUState *env)
 static unsigned long
 vtop(CPUState *env, uint32_t vaddr)
 {
-	int idx;
-	struct CPUTLBEntry *tlb_entry;
 	target_phys_addr_t paddr;
-	int tlb_filled = 0;
-	int mmu_idx = cpu_mmu_index(env);
-
-	idx = (vaddr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
-	tlb_entry = &env->tlb_table[mmu_idx][idx];
-
-	printf("tlb_entry %p\n", tlb_entry);
-
-	while ((tlb_entry->addr_read &
-	     tlb_entry->addr_write &
-	     tlb_entry->addr_code)
-	    & TLB_INVALID_MASK) {
-		if (tlb_filled)
-			cpu_abort(env, "No mapping for vaddr %#x\n", vaddr);
-		/* XXX: cpu_arm_handle_mmu_fault()? */
-		tlb_fill(vaddr, !0, mmu_idx, GETPC());
-		tlb_filled = !0;
-	}
-
-	paddr = vaddr + tlb_entry->addend;
-	printf("vtop: v%#x -> %#x (idx = %d, mmu_idx = %d)\n", vaddr, paddr, idx, mmu_idx);
-	if (vaddr == paddr)
-		cpu_abort(env, "vaddr == paddr\n");
-	return paddr - (uint32_t)phys_ram_base;
+	paddr = cpu_get_phys_page_debug(env, vaddr);
+	printf("vtop: v%#x -> %#x\n", vaddr, paddr);
+	return paddr;
 }
 
 void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
