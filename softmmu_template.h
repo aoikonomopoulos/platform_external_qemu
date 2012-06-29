@@ -245,12 +245,12 @@ static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
 static void glue(glue(slow_st, SUFFIX), MMUSUFFIX)(target_ulong addr,
                                                    DATA_TYPE val,
                                                    int mmu_idx,
-                                                   void *retaddr);
+                                                   void *retaddr, argos_rtag_t *tag);
 
 static inline void glue(io_write, SUFFIX)(target_phys_addr_t physaddr,
                                           DATA_TYPE val,
                                           target_ulong addr,
-                                          void *retaddr)
+                                          void *retaddr, argos_rtag_t *tag)
 {
     int index;
     index = (physaddr >> IO_MEM_SHIFT) & (IO_MEM_NB_ENTRIES - 1);
@@ -298,7 +298,7 @@ void REGPARM glue(glue(__st, SUFFIX), MMUSUFFIX)(target_ulong addr,
                 goto do_unaligned_access;
             retaddr = GETPC();
             ioaddr = env->iotlb[mmu_idx][index];
-            glue(io_write, SUFFIX)(ioaddr, val, addr, retaddr);
+            glue(io_write, SUFFIX)(ioaddr, val, addr, retaddr, tag);
         } else if (((addr & ~TARGET_PAGE_MASK) + DATA_SIZE - 1) >= TARGET_PAGE_SIZE) {
             /* This is not I/O access: do access verification. */
 #ifdef CONFIG_MEMCHECK_MMU
@@ -318,7 +318,7 @@ void REGPARM glue(glue(__st, SUFFIX), MMUSUFFIX)(target_ulong addr,
             do_unaligned_access(addr, 1, mmu_idx, retaddr);
 #endif
             glue(glue(slow_st, SUFFIX), MMUSUFFIX)(addr, val,
-                                                   mmu_idx, retaddr);
+                                                   mmu_idx, retaddr, tag);
         } else {
 #ifdef CONFIG_MEMCHECK_MMU
             /* We only validate access to the guest's user space, for which
@@ -337,6 +337,7 @@ void REGPARM glue(glue(__st, SUFFIX), MMUSUFFIX)(target_ulong addr,
             }
 #endif
             addend = env->tlb_table[mmu_idx][index].addend;
+            glue(argos_memmap_, glue(st, SUFFIX))((unsigned long)(addr+addend) - (unsigned long)phys_ram_base, tag);
             glue(glue(st, SUFFIX), _raw)((uint8_t *)(long)(addr+addend), val);
         }
 #ifdef CONFIG_MEMCHECK_MMU
@@ -369,7 +370,7 @@ void REGPARM glue(glue(__st, SUFFIX), MMUSUFFIX)(target_ulong addr,
 static void glue(glue(slow_st, SUFFIX), MMUSUFFIX)(target_ulong addr,
                                                    DATA_TYPE val,
                                                    int mmu_idx,
-                                                   void *retaddr)
+                                                   void *retaddr, argos_rtag_t *tag)
 {
     target_phys_addr_t ioaddr;
     unsigned long addend;
@@ -385,7 +386,7 @@ static void glue(glue(slow_st, SUFFIX), MMUSUFFIX)(target_ulong addr,
             if ((addr & (DATA_SIZE - 1)) != 0)
                 goto do_unaligned_access;
             ioaddr = env->iotlb[mmu_idx][index];
-            glue(io_write, SUFFIX)(ioaddr, val, addr, retaddr);
+            glue(io_write, SUFFIX)(ioaddr, val, addr, retaddr, tag);
         } else if (((addr & ~TARGET_PAGE_MASK) + DATA_SIZE - 1) >= TARGET_PAGE_SIZE) {
         do_unaligned_access:
             /* XXX: not efficient, but simple */
@@ -397,7 +398,7 @@ static void glue(glue(slow_st, SUFFIX), MMUSUFFIX)(target_ulong addr,
                                           mmu_idx, retaddr);
 #else
                 glue(slow_stb, MMUSUFFIX)(addr + i, val >> (i * 8),
-                                          mmu_idx, retaddr);
+                                          mmu_idx, retaddr, tag);
 #endif
             }
         } else {

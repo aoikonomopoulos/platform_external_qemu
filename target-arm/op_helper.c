@@ -486,10 +486,10 @@ void HELPER(neon_vldst_all)(uint32_t insn)
 #define LDW(addr) slow_ldw_mmu(addr, user, GETPC(), &_argos_dummy_tag)
 #define LDL(addr) slow_ldl_mmu(addr, user, GETPC(), &_argos_dummy_tag)
 #define LDQ(addr) slow_ldq_mmu(addr, user, GETPC(), &_argos_dummy_tag)
-#define STB(addr, val) slow_stb_mmu(addr, val, user, GETPC())
-#define STW(addr, val) slow_stw_mmu(addr, val, user, GETPC())
-#define STL(addr, val) slow_stl_mmu(addr, val, user, GETPC())
-#define STQ(addr, val) slow_stq_mmu(addr, val, user, GETPC())
+#define STB(addr, val) slow_stb_mmu(addr, val, user, GETPC(), &_argos_dummy_tag)
+#define STW(addr, val) slow_stw_mmu(addr, val, user, GETPC(), &_argos_dummy_tag)
+#define STL(addr, val) slow_stl_mmu(addr, val, user, GETPC(), &_argos_dummy_tag)
+#define STQ(addr, val) slow_stq_mmu(addr, val, user, GETPC(), &_argos_dummy_tag)
 #endif
     static const struct {
         int nregs;

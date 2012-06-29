@@ -1558,11 +1558,16 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args,
         tcg_out_mov(s, TCG_TYPE_I32, TCG_REG_EDX, data_reg);
         if (opc == 3) {
             tcg_out_mov(s, TCG_TYPE_I32, TCG_REG_ECX, data_reg2);
-            tcg_out_pushi(s, mem_index);
-            stack_adjust = 4;
+            tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS,
+                                 (tcg_target_long)tag_for_reg(s, data_reg));
+            tcg_out_push(s, TCG_REG_ARGOS);
+            tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, mem_index);
+            tcg_out_push(s, TCG_REG_ARGOS);
+            stack_adjust = 8;
         } else {
             tcg_out_movi(s, TCG_TYPE_I32, TCG_REG_ECX, mem_index);
-            stack_adjust = 0;
+            tcg_out_pushi(s, (tcg_target_long)tag_for_reg(s, data_reg));
+            stack_adjust = 4;
         }
     } else {
         if (opc == 3) {
