@@ -842,8 +842,12 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
      * unconditionally clear the tag for the destination register
      * XXX: needs to be conditional on the arithmetic operation
      */
-    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
-    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+    if (c != ARITH_AND) {
+        tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+        tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+    } else {
+            /* preserve taint for the destination of an AND */
+    }
 
     /* ??? While INC is 2 bytes shorter than ADDL $1, they also induce
        partial flags update stalls on Pentium4 and are not recommended
