@@ -746,6 +746,7 @@ static inline void gen_bx(DisasContext *s, TCGv var)
     tcg_gen_andi_i32(cpu_R[15], var, ~1);
     tcg_gen_andi_i32(var, var, 1);
     store_cpu_field(var, thumb);
+    gen_helper_check_pc_taint(cpu_env);
 }
 
 /* Variant of store_reg which uses branch&exchange logic when storing

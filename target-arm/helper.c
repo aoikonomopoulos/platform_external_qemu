@@ -1399,6 +1399,14 @@ static uint32_t extended_mpu_ap_bits(uint32_t val)
     return ret;
 }
 
+void HELPER(check_pc_taint)(CPUState *env)
+{
+    if (env->regtags[15] != 0) {
+        fprintf(stderr, "PC is tainted!\n");
+        abort();
+    }
+}
+
 static unsigned long
 vtop(CPUState *env, uint32_t vaddr)
 {
