@@ -149,8 +149,8 @@ static inline int load_segment(uint32_t *e1_ptr, uint32_t *e2_ptr,
     if ((index + 7) > dt->limit)
         return -1;
     ptr = dt->base + index;
-    *e1_ptr = ldl_kernel(ptr);
-    *e2_ptr = ldl_kernel(ptr + 4);
+    *e1_ptr = ldl_kernel_notaint(ptr);
+    *e2_ptr = ldl_kernel_notaint(ptr + 4);
     return 0;
 }
 
@@ -210,11 +210,11 @@ static inline void get_ss_esp_from_tss(uint32_t *ss_ptr,
     if (index + (4 << shift) - 1 > env->tr.limit)
         raise_exception_err(EXCP0A_TSS, env->tr.selector & 0xfffc);
     if (shift == 0) {
-        *esp_ptr = lduw_kernel(env->tr.base + index);
-        *ss_ptr = lduw_kernel(env->tr.base + index + 2);
+        *esp_ptr = lduw_kernel_notaint(env->tr.base + index);
+        *ss_ptr = lduw_kernel_notaint(env->tr.base + index + 2);
     } else {
-        *esp_ptr = ldl_kernel(env->tr.base + index);
-        *ss_ptr = lduw_kernel(env->tr.base + index + 4);
+        *esp_ptr = ldl_kernel_notaint(env->tr.base + index);
+        *ss_ptr = lduw_kernel_notaint(env->tr.base + index + 4);
     }
 }
 
@@ -326,25 +326,25 @@ static void switch_tss(int tss_selector,
     /* read all the registers from the new TSS */
     if (type & 8) {
         /* 32 bit */
-        new_cr3 = ldl_kernel(tss_base + 0x1c);
-        new_eip = ldl_kernel(tss_base + 0x20);
-        new_eflags = ldl_kernel(tss_base + 0x24);
+        new_cr3 = ldl_kernel_notaint(tss_base + 0x1c);
+        new_eip = ldl_kernel_notaint(tss_base + 0x20);
+        new_eflags = ldl_kernel_notaint(tss_base + 0x24);
         for(i = 0; i < 8; i++)
-            new_regs[i] = ldl_kernel(tss_base + (0x28 + i * 4));
+            new_regs[i] = ldl_kernel_notaint(tss_base + (0x28 + i * 4));
         for(i = 0; i < 6; i++)
-            new_segs[i] = lduw_kernel(tss_base + (0x48 + i * 4));
-        new_ldt = lduw_kernel(tss_base + 0x60);
-        new_trap = ldl_kernel(tss_base + 0x64);
+            new_segs[i] = lduw_kernel_notaint(tss_base + (0x48 + i * 4));
+        new_ldt = lduw_kernel_notaint(tss_base + 0x60);
+        new_trap = ldl_kernel_notaint(tss_base + 0x64);
     } else {
         /* 16 bit */
         new_cr3 = 0;
-        new_eip = lduw_kernel(tss_base + 0x0e);
-        new_eflags = lduw_kernel(tss_base + 0x10);
+        new_eip = lduw_kernel_notaint(tss_base + 0x0e);
+        new_eflags = lduw_kernel_notaint(tss_base + 0x10);
         for(i = 0; i < 8; i++)
-            new_regs[i] = lduw_kernel(tss_base + (0x12 + i * 2)) | 0xffff0000;
+            new_regs[i] = lduw_kernel_notaint(tss_base + (0x12 + i * 2)) | 0xffff0000;
         for(i = 0; i < 4; i++)
-            new_segs[i] = lduw_kernel(tss_base + (0x22 + i * 4));
-        new_ldt = lduw_kernel(tss_base + 0x2a);
+            new_segs[i] = lduw_kernel_notaint(tss_base + (0x22 + i * 4));
+        new_ldt = lduw_kernel_notaint(tss_base + 0x2a);
         new_segs[R_FS] = 0;
         new_segs[R_GS] = 0;
         new_trap = 0;
@@ -355,19 +355,19 @@ static void switch_tss(int tss_selector,
     /* XXX: it can still fail in some cases, so a bigger hack is
        necessary to valid the TLB after having done the accesses */
 
-    v1 = ldub_kernel(env->tr.base);
-    v2 = ldub_kernel(env->tr.base + old_tss_limit_max);
-    stb_kernel(env->tr.base, v1);
-    stb_kernel(env->tr.base + old_tss_limit_max, v2);
+    v1 = ldub_kernel_notaint(env->tr.base);
+    v2 = ldub_kernel_notaint(env->tr.base + old_tss_limit_max);
+    stb_kernel_notaint(env->tr.base, v1);
+    stb_kernel_notaint(env->tr.base + old_tss_limit_max, v2);
 
     /* clear busy bit (it is restartable) */
     if (source == SWITCH_TSS_JMP || source == SWITCH_TSS_IRET) {
         target_ulong ptr;
         uint32_t e2;
         ptr = env->gdt.base + (env->tr.selector & ~7);
-        e2 = ldl_kernel(ptr + 4);
+        e2 = ldl_kernel_notaint(ptr + 4);
         e2 &= ~DESC_TSS_BUSY_MASK;
-        stl_kernel(ptr + 4, e2);
+        stl_kernel_notaint(ptr + 4, e2);
     }
     old_eflags = compute_eflags();
     if (source == SWITCH_TSS_IRET)
@@ -376,39 +376,39 @@ static void switch_tss(int tss_selector,
     /* save the current state in the old TSS */
     if (type & 8) {
         /* 32 bit */
-        stl_kernel(env->tr.base + 0x20, next_eip);
-        stl_kernel(env->tr.base + 0x24, old_eflags);
-        stl_kernel(env->tr.base + (0x28 + 0 * 4), EAX);
-        stl_kernel(env->tr.base + (0x28 + 1 * 4), ECX);
-        stl_kernel(env->tr.base + (0x28 + 2 * 4), EDX);
-        stl_kernel(env->tr.base + (0x28 + 3 * 4), EBX);
-        stl_kernel(env->tr.base + (0x28 + 4 * 4), ESP);
-        stl_kernel(env->tr.base + (0x28 + 5 * 4), EBP);
-        stl_kernel(env->tr.base + (0x28 + 6 * 4), ESI);
-        stl_kernel(env->tr.base + (0x28 + 7 * 4), EDI);
+        stl_kernel_notaint(env->tr.base + 0x20, next_eip);
+        stl_kernel_notaint(env->tr.base + 0x24, old_eflags);
+        stl_kernel_notaint(env->tr.base + (0x28 + 0 * 4), EAX);
+        stl_kernel_notaint(env->tr.base + (0x28 + 1 * 4), ECX);
+        stl_kernel_notaint(env->tr.base + (0x28 + 2 * 4), EDX);
+        stl_kernel_notaint(env->tr.base + (0x28 + 3 * 4), EBX);
+        stl_kernel_notaint(env->tr.base + (0x28 + 4 * 4), ESP);
+        stl_kernel_notaint(env->tr.base + (0x28 + 5 * 4), EBP);
+        stl_kernel_notaint(env->tr.base + (0x28 + 6 * 4), ESI);
+        stl_kernel_notaint(env->tr.base + (0x28 + 7 * 4), EDI);
         for(i = 0; i < 6; i++)
-            stw_kernel(env->tr.base + (0x48 + i * 4), env->segs[i].selector);
+            stw_kernel_notaint(env->tr.base + (0x48 + i * 4), env->segs[i].selector);
     } else {
         /* 16 bit */
-        stw_kernel(env->tr.base + 0x0e, next_eip);
-        stw_kernel(env->tr.base + 0x10, old_eflags);
-        stw_kernel(env->tr.base + (0x12 + 0 * 2), EAX);
-        stw_kernel(env->tr.base + (0x12 + 1 * 2), ECX);
-        stw_kernel(env->tr.base + (0x12 + 2 * 2), EDX);
-        stw_kernel(env->tr.base + (0x12 + 3 * 2), EBX);
-        stw_kernel(env->tr.base + (0x12 + 4 * 2), ESP);
-        stw_kernel(env->tr.base + (0x12 + 5 * 2), EBP);
-        stw_kernel(env->tr.base + (0x12 + 6 * 2), ESI);
-        stw_kernel(env->tr.base + (0x12 + 7 * 2), EDI);
+        stw_kernel_notaint(env->tr.base + 0x0e, next_eip);
+        stw_kernel_notaint(env->tr.base + 0x10, old_eflags);
+        stw_kernel_notaint(env->tr.base + (0x12 + 0 * 2), EAX);
+        stw_kernel_notaint(env->tr.base + (0x12 + 1 * 2), ECX);
+        stw_kernel_notaint(env->tr.base + (0x12 + 2 * 2), EDX);
+        stw_kernel_notaint(env->tr.base + (0x12 + 3 * 2), EBX);
+        stw_kernel_notaint(env->tr.base + (0x12 + 4 * 2), ESP);
+        stw_kernel_notaint(env->tr.base + (0x12 + 5 * 2), EBP);
+        stw_kernel_notaint(env->tr.base + (0x12 + 6 * 2), ESI);
+        stw_kernel_notaint(env->tr.base + (0x12 + 7 * 2), EDI);
         for(i = 0; i < 4; i++)
-            stw_kernel(env->tr.base + (0x22 + i * 4), env->segs[i].selector);
+            stw_kernel_notaint(env->tr.base + (0x22 + i * 4), env->segs[i].selector);
     }
 
     /* now if an exception occurs, it will occurs in the next task
        context */
 
     if (source == SWITCH_TSS_CALL) {
-        stw_kernel(tss_base, env->tr.selector);
+        stw_kernel_notaint(tss_base, env->tr.selector);
         new_eflags |= NT_MASK;
     }
 
@@ -417,9 +417,9 @@ static void switch_tss(int tss_selector,
         target_ulong ptr;
         uint32_t e2;
         ptr = env->gdt.base + (tss_selector & ~7);
-        e2 = ldl_kernel(ptr + 4);
+        e2 = ldl_kernel_notaint(ptr + 4);
         e2 |= DESC_TSS_BUSY_MASK;
-        stl_kernel(ptr + 4, e2);
+        stl_kernel_notaint(ptr + 4, e2);
     }
 
     /* set the new CPU state */
@@ -480,8 +480,8 @@ static void switch_tss(int tss_selector,
         if ((index + 7) > dt->limit)
             raise_exception_err(EXCP0A_TSS, new_ldt & 0xfffc);
         ptr = dt->base + index;
-        e1 = ldl_kernel(ptr);
-        e2 = ldl_kernel(ptr + 4);
+        e1 = ldl_kernel_notaint(ptr);
+        e2 = ldl_kernel_notaint(ptr + 4);
         if ((e2 & DESC_S_MASK) || ((e2 >> DESC_TYPE_SHIFT) & 0xf) != 2)
             raise_exception_err(EXCP0A_TSS, new_ldt & 0xfffc);
         if (!(e2 & DESC_P_MASK))
@@ -527,12 +527,12 @@ static inline void check_io(int addr, int size)
         ((env->tr.flags >> DESC_TYPE_SHIFT) & 0xf) != 9 ||
         env->tr.limit < 103)
         goto fail;
-    io_offset = lduw_kernel(env->tr.base + 0x66);
+    io_offset = lduw_kernel_notaint(env->tr.base + 0x66);
     io_offset += (addr >> 3);
     /* Note: the check needs two bytes */
     if ((io_offset + 1) > env->tr.limit)
         goto fail;
-    val = lduw_kernel(env->tr.base + io_offset);
+    val = lduw_kernel_notaint(env->tr.base + io_offset);
     val >>= (addr & 7);
     mask = (1 << size) - 1;
     /* all bits must be zero to allow the I/O */
@@ -632,24 +632,24 @@ do {\
 #define PUSHW(ssp, sp, sp_mask, val)\
 {\
     sp -= 2;\
-    stw_kernel((ssp) + (sp & (sp_mask)), (val));\
+    stw_kernel_notaint((ssp) + (sp & (sp_mask)), (val));\
 }
 
 #define PUSHL(ssp, sp, sp_mask, val)\
 {\
     sp -= 4;\
-    stl_kernel(SEG_ADDL(ssp, sp, sp_mask), (uint32_t)(val));\
+    stl_kernel_notaint(SEG_ADDL(ssp, sp, sp_mask), (uint32_t)(val));\
 }
 
 #define POPW(ssp, sp, sp_mask, val)\
 {\
-    val = lduw_kernel((ssp) + (sp & (sp_mask)));\
+    val = lduw_kernel_notaint((ssp) + (sp & (sp_mask)));\
     sp += 2;\
 }
 
 #define POPL(ssp, sp, sp_mask, val)\
 {\
-    val = (uint32_t)ldl_kernel(SEG_ADDL(ssp, sp, sp_mask));\
+    val = (uint32_t)ldl_kernel_notaint(SEG_ADDL(ssp, sp, sp_mask));\
     sp += 4;\
 }
 
@@ -676,8 +676,8 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
     if (intno * 8 + 7 > dt->limit)
         raise_exception_err(EXCP0D_GPF, intno * 8 + 2);
     ptr = dt->base + intno * 8;
-    e1 = ldl_kernel(ptr);
-    e2 = ldl_kernel(ptr + 4);
+    e1 = ldl_kernel_notaint(ptr);
+    e2 = ldl_kernel_notaint(ptr + 4);
     /* check gate type */
     type = (e2 >> DESC_TYPE_SHIFT) & 0x1f;
     switch(type) {
@@ -699,9 +699,9 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
             esp = (ESP - (2 << shift)) & mask;
             ssp = env->segs[R_SS].base + esp;
             if (shift)
-                stl_kernel(ssp, error_code);
+                stl_kernel_notaint(ssp, error_code);
             else
-                stw_kernel(ssp, error_code);
+                stw_kernel_notaint(ssp, error_code);
             SET_ESP(esp, mask);
         }
         return;
@@ -852,12 +852,12 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
 #define PUSHQ(sp, val)\
 {\
     sp -= 8;\
-    stq_kernel(sp, (val));\
+    stq_kernel_notaint(sp, (val));\
 }
 
 #define POPQ(sp, val)\
 {\
-    val = ldq_kernel(sp);\
+    val = ldq_kernel_notaint(sp);\
     sp += 8;\
 }
 
@@ -875,7 +875,7 @@ static inline target_ulong get_rsp_from_tss(int level)
     index = 8 * level + 4;
     if ((index + 7) > env->tr.limit)
         raise_exception_err(EXCP0A_TSS, env->tr.selector & 0xfffc);
-    return ldq_kernel(env->tr.base + index);
+    return ldq_kernel_notaint(env->tr.base + index);
 }
 
 /* 64 bit interrupt */
@@ -901,9 +901,9 @@ static void do_interrupt64(int intno, int is_int, int error_code,
     if (intno * 16 + 15 > dt->limit)
         raise_exception_err(EXCP0D_GPF, intno * 16 + 2);
     ptr = dt->base + intno * 16;
-    e1 = ldl_kernel(ptr);
-    e2 = ldl_kernel(ptr + 4);
-    e3 = ldl_kernel(ptr + 8);
+    e1 = ldl_kernel_notaint(ptr);
+    e2 = ldl_kernel_notaint(ptr + 4);
+    e3 = ldl_kernel_notaint(ptr + 8);
     /* check gate type */
     type = (e2 >> DESC_TYPE_SHIFT) & 0x1f;
     switch(type) {
@@ -1138,8 +1138,8 @@ static void do_interrupt_real(int intno, int is_int, int error_code,
     if (intno * 4 + 3 > dt->limit)
         raise_exception_err(EXCP0D_GPF, intno * 8 + 2);
     ptr = dt->base + intno * 4;
-    offset = lduw_kernel(ptr);
-    selector = lduw_kernel(ptr + 2);
+    offset = lduw_kernel_notaint(ptr);
+    selector = lduw_kernel_notaint(ptr + 2);
     esp = ESP;
     ssp = env->segs[R_SS].base;
     if (is_int)
@@ -1176,7 +1176,7 @@ void do_interrupt_user(int intno, int is_int, int error_code,
         shift = 3;
     }
     ptr = dt->base + (intno << shift);
-    e2 = ldl_kernel(ptr + 4);
+    e2 = ldl_kernel_notaint(ptr + 4);
 
     dpl = (e2 >> DESC_DPL_SHIFT) & 3;
     cpl = env->hflags & HF_CPL_MASK;
@@ -1243,7 +1243,7 @@ void do_interrupt(int intno, int is_int, int error_code,
                 qemu_log("       code=");
                 ptr = env->segs[R_CS].base + env->eip;
                 for(i = 0; i < 16; i++) {
-                    qemu_log(" %02x", ldub(ptr + i));
+                    qemu_log(" %02x", ldub_notaint(ptr + i));
                 }
                 qemu_log("\n");
             }
@@ -1885,13 +1885,13 @@ void helper_cmpxchg8b(target_ulong a0)
     int eflags;
 
     eflags = helper_cc_compute_all(CC_OP);
-    d = ldq(a0);
+    d = ldq_notaint(a0);
     if (d == (((uint64_t)EDX << 32) | (uint32_t)EAX)) {
-        stq(a0, ((uint64_t)ECX << 32) | (uint32_t)EBX);
+        stq_notaint(a0, ((uint64_t)ECX << 32) | (uint32_t)EBX);
         eflags |= CC_Z;
     } else {
         /* always do the store */
-        stq(a0, d);
+        stq_notaint(a0, d);
         EDX = (uint32_t)(d >> 32);
         EAX = (uint32_t)d;
         eflags &= ~CC_Z;
@@ -1908,16 +1908,16 @@ void helper_cmpxchg16b(target_ulong a0)
     if ((a0 & 0xf) != 0)
         raise_exception(EXCP0D_GPF);
     eflags = helper_cc_compute_all(CC_OP);
-    d0 = ldq(a0);
-    d1 = ldq(a0 + 8);
+    d0 = ldq_notaint(a0);
+    d1 = ldq_notaint(a0 + 8);
     if (d0 == EAX && d1 == EDX) {
-        stq(a0, EBX);
-        stq(a0 + 8, ECX);
+        stq_notaint(a0, EBX);
+        stq_notaint(a0 + 8, ECX);
         eflags |= CC_Z;
     } else {
         /* always do the store */
-        stq(a0, d0);
-        stq(a0 + 8, d1);
+        stq_notaint(a0, d0);
+        stq_notaint(a0 + 8, d1);
         EDX = d1;
         EAX = d0;
         eflags &= ~CC_Z;
@@ -1963,20 +1963,20 @@ void helper_enter_level(int level, int data32, target_ulong t1)
         while (--level) {
             esp -= 4;
             ebp -= 4;
-            stl(ssp + (esp & esp_mask), ldl(ssp + (ebp & esp_mask)));
+            stl_notaint(ssp + (esp & esp_mask), ldl_notaint(ssp + (ebp & esp_mask)));
         }
         esp -= 4;
-        stl(ssp + (esp & esp_mask), t1);
+        stl_notaint(ssp + (esp & esp_mask), t1);
     } else {
         /* 16 bit */
         esp -= 2;
         while (--level) {
             esp -= 2;
             ebp -= 2;
-            stw(ssp + (esp & esp_mask), lduw(ssp + (ebp & esp_mask)));
+            stw_notaint(ssp + (esp & esp_mask), lduw_notaint(ssp + (ebp & esp_mask)));
         }
         esp -= 2;
-        stw(ssp + (esp & esp_mask), t1);
+        stw_notaint(ssp + (esp & esp_mask), t1);
     }
 }
 
@@ -1993,20 +1993,20 @@ void helper_enter64_level(int level, int data64, target_ulong t1)
         while (--level) {
             esp -= 8;
             ebp -= 8;
-            stq(esp, ldq(ebp));
+            stq_notaint(esp, ldq_notaint(ebp));
         }
         esp -= 8;
-        stq(esp, t1);
+        stq_notaint(esp, t1);
     } else {
         /* 16 bit */
         esp -= 2;
         while (--level) {
             esp -= 2;
             ebp -= 2;
-            stw(esp, lduw(ebp));
+            stw_notaint(esp, lduw_notaint(ebp));
         }
         esp -= 2;
-        stw(esp, t1);
+        stw_notaint(esp, t1);
     }
 }
 #endif
@@ -2037,8 +2037,8 @@ void helper_lldt(int selector)
         if ((index + entry_limit) > dt->limit)
             raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
         ptr = dt->base + index;
-        e1 = ldl_kernel(ptr);
-        e2 = ldl_kernel(ptr + 4);
+        e1 = ldl_kernel_notaint(ptr);
+        e2 = ldl_kernel_notaint(ptr + 4);
         if ((e2 & DESC_S_MASK) || ((e2 >> DESC_TYPE_SHIFT) & 0xf) != 2)
             raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
         if (!(e2 & DESC_P_MASK))
@@ -2046,7 +2046,7 @@ void helper_lldt(int selector)
 #ifdef TARGET_X86_64
         if (env->hflags & HF_LMA_MASK) {
             uint32_t e3;
-            e3 = ldl_kernel(ptr + 8);
+            e3 = ldl_kernel_notaint(ptr + 8);
             load_seg_cache_raw_dt(&env->ldt, e1, e2);
             env->ldt.base |= (target_ulong)e3 << 32;
         } else
@@ -2085,8 +2085,8 @@ void helper_ltr(int selector)
         if ((index + entry_limit) > dt->limit)
             raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
         ptr = dt->base + index;
-        e1 = ldl_kernel(ptr);
-        e2 = ldl_kernel(ptr + 4);
+        e1 = ldl_kernel_notaint(ptr);
+        e2 = ldl_kernel_notaint(ptr + 4);
         type = (e2 >> DESC_TYPE_SHIFT) & 0xf;
         if ((e2 & DESC_S_MASK) ||
             (type != 1 && type != 9))
@@ -2096,8 +2096,8 @@ void helper_ltr(int selector)
 #ifdef TARGET_X86_64
         if (env->hflags & HF_LMA_MASK) {
             uint32_t e3, e4;
-            e3 = ldl_kernel(ptr + 8);
-            e4 = ldl_kernel(ptr + 12);
+            e3 = ldl_kernel_notaint(ptr + 8);
+            e4 = ldl_kernel_notaint(ptr + 12);
             if ((e4 >> DESC_TYPE_SHIFT) & 0xf)
                 raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
             load_seg_cache_raw_dt(&env->tr, e1, e2);
@@ -2108,7 +2108,7 @@ void helper_ltr(int selector)
             load_seg_cache_raw_dt(&env->tr, e1, e2);
         }
         e2 |= DESC_TSS_BUSY_MASK;
-        stl_kernel(ptr + 4, e2);
+        stl_kernel_notaint(ptr + 4, e2);
     }
     env->tr.selector = selector;
 }
@@ -2143,8 +2143,8 @@ void helper_load_seg(int seg_reg, int selector)
         if ((index + 7) > dt->limit)
             raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
         ptr = dt->base + index;
-        e1 = ldl_kernel(ptr);
-        e2 = ldl_kernel(ptr + 4);
+        e1 = ldl_kernel_notaint(ptr);
+        e2 = ldl_kernel_notaint(ptr + 4);
 
         if (!(e2 & DESC_S_MASK))
             raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
@@ -2178,7 +2178,7 @@ void helper_load_seg(int seg_reg, int selector)
         /* set the access bit if not already set */
         if (!(e2 & DESC_A_MASK)) {
             e2 |= DESC_A_MASK;
-            stl_kernel(ptr + 4, e2);
+            stl_kernel_notaint(ptr + 4, e2);
         }
 
         cpu_x86_load_seg_cache(env, seg_reg, selector,
@@ -2459,14 +2459,14 @@ void helper_lcall_protected(int new_cs, target_ulong new_eip,
                 PUSHL(ssp, sp, sp_mask, env->segs[R_SS].selector);
                 PUSHL(ssp, sp, sp_mask, ESP);
                 for(i = param_count - 1; i >= 0; i--) {
-                    val = ldl_kernel(old_ssp + ((ESP + i * 4) & old_sp_mask));
+                    val = ldl_kernel_notaint(old_ssp + ((ESP + i * 4) & old_sp_mask));
                     PUSHL(ssp, sp, sp_mask, val);
                 }
             } else {
                 PUSHW(ssp, sp, sp_mask, env->segs[R_SS].selector);
                 PUSHW(ssp, sp, sp_mask, ESP);
                 for(i = param_count - 1; i >= 0; i--) {
-                    val = lduw_kernel(old_ssp + ((ESP + i * 2) & old_sp_mask));
+                    val = lduw_kernel_notaint(old_ssp + ((ESP + i * 2) & old_sp_mask));
                     PUSHW(ssp, sp, sp_mask, val);
                 }
             }
@@ -2779,7 +2779,7 @@ void helper_iret_protected(int shift, int next_eip)
         if (env->hflags & HF_LMA_MASK)
             raise_exception_err(EXCP0D_GPF, 0);
 #endif
-        tss_selector = lduw_kernel(env->tr.base + 0);
+        tss_selector = lduw_kernel_notaint(env->tr.base + 0);
         if (tss_selector & 4)
             raise_exception_err(EXCP0A_TSS, tss_selector & 0xfffc);
         if (load_segment(&e1, &e2, tss_selector) != 0)
@@ -3940,11 +3940,11 @@ void helper_fbld_ST0(target_ulong ptr)
 
     val = 0;
     for(i = 8; i >= 0; i--) {
-        v = ldub(ptr + i);
+        v = ldub_notaint(ptr + i);
         val = (val * 100) + ((v >> 4) * 10) + (v & 0xf);
     }
     tmp = val;
-    if (ldub(ptr + 9) & 0x80)
+    if (ldub_notaint(ptr + 9) & 0x80)
         tmp = -tmp;
     fpush();
     ST0 = tmp;
@@ -3960,10 +3960,10 @@ void helper_fbst_ST0(target_ulong ptr)
     mem_ref = ptr;
     mem_end = mem_ref + 9;
     if (val < 0) {
-        stb(mem_end, 0x80);
+        stb_notaint(mem_end, 0x80);
         val = -val;
     } else {
-        stb(mem_end, 0x00);
+        stb_notaint(mem_end, 0x00);
     }
     while (mem_ref < mem_end) {
         if (val == 0)
@@ -3971,10 +3971,10 @@ void helper_fbst_ST0(target_ulong ptr)
         v = val % 100;
         val = val / 100;
         v = ((v / 10) << 4) | (v % 10);
-        stb(mem_ref++, v);
+        stb_notaint(mem_ref++, v);
     }
     while (mem_ref < mem_end) {
-        stb(mem_ref++, 0);
+        stb_notaint(mem_ref++, 0);
     }
 }
 
@@ -4291,22 +4291,22 @@ void helper_fstenv(target_ulong ptr, int data32)
     }
     if (data32) {
         /* 32 bit */
-        stl(ptr, env->fpuc);
-        stl(ptr + 4, fpus);
-        stl(ptr + 8, fptag);
-        stl(ptr + 12, 0); /* fpip */
-        stl(ptr + 16, 0); /* fpcs */
-        stl(ptr + 20, 0); /* fpoo */
-        stl(ptr + 24, 0); /* fpos */
+        stl_notaint(ptr, env->fpuc);
+        stl_notaint(ptr + 4, fpus);
+        stl_notaint(ptr + 8, fptag);
+        stl_notaint(ptr + 12, 0); /* fpip */
+        stl_notaint(ptr + 16, 0); /* fpcs */
+        stl_notaint(ptr + 20, 0); /* fpoo */
+        stl_notaint(ptr + 24, 0); /* fpos */
     } else {
         /* 16 bit */
-        stw(ptr, env->fpuc);
-        stw(ptr + 2, fpus);
-        stw(ptr + 4, fptag);
-        stw(ptr + 6, 0);
-        stw(ptr + 8, 0);
-        stw(ptr + 10, 0);
-        stw(ptr + 12, 0);
+        stw_notaint(ptr, env->fpuc);
+        stw_notaint(ptr + 2, fpus);
+        stw_notaint(ptr + 4, fptag);
+        stw_notaint(ptr + 6, 0);
+        stw_notaint(ptr + 8, 0);
+        stw_notaint(ptr + 10, 0);
+        stw_notaint(ptr + 12, 0);
     }
 }
 
@@ -4315,14 +4315,14 @@ void helper_fldenv(target_ulong ptr, int data32)
     int i, fpus, fptag;
 
     if (data32) {
-	env->fpuc = lduw(ptr);
-        fpus = lduw(ptr + 4);
-        fptag = lduw(ptr + 8);
+	env->fpuc = lduw_notaint(ptr);
+        fpus = lduw_notaint(ptr + 4);
+        fptag = lduw_notaint(ptr + 8);
     }
     else {
-	env->fpuc = lduw(ptr);
-        fpus = lduw(ptr + 2);
-        fptag = lduw(ptr + 4);
+	env->fpuc = lduw_notaint(ptr);
+        fpus = lduw_notaint(ptr + 2);
+        fptag = lduw_notaint(ptr + 4);
     }
     env->fpstt = (fpus >> 11) & 7;
     env->fpus = fpus & ~0x3800;
@@ -4386,20 +4386,20 @@ void helper_fxsave(target_ulong ptr, int data64)
     for(i = 0; i < 8; i++) {
         fptag |= (env->fptags[i] << i);
     }
-    stw(ptr, env->fpuc);
-    stw(ptr + 2, fpus);
-    stw(ptr + 4, fptag ^ 0xff);
+    stw_notaint(ptr, env->fpuc);
+    stw_notaint(ptr + 2, fpus);
+    stw_notaint(ptr + 4, fptag ^ 0xff);
 #ifdef TARGET_X86_64
     if (data64) {
-        stq(ptr + 0x08, 0); /* rip */
-        stq(ptr + 0x10, 0); /* rdp */
+        stq_notaint(ptr + 0x08, 0); /* rip */
+        stq_notaint(ptr + 0x10, 0); /* rdp */
     } else
 #endif
     {
-        stl(ptr + 0x08, 0); /* eip */
-        stl(ptr + 0x0c, 0); /* sel  */
-        stl(ptr + 0x10, 0); /* dp */
-        stl(ptr + 0x14, 0); /* sel  */
+        stl_notaint(ptr + 0x08, 0); /* eip */
+        stl_notaint(ptr + 0x0c, 0); /* sel  */
+        stl_notaint(ptr + 0x10, 0); /* dp */
+        stl_notaint(ptr + 0x14, 0); /* sel  */
     }
 
     addr = ptr + 0x20;
@@ -4411,8 +4411,8 @@ void helper_fxsave(target_ulong ptr, int data64)
 
     if (env->cr[4] & CR4_OSFXSR_MASK) {
         /* XXX: finish it */
-        stl(ptr + 0x18, env->mxcsr); /* mxcsr */
-        stl(ptr + 0x1c, 0x0000ffff); /* mxcsr_mask */
+        stl_notaint(ptr + 0x18, env->mxcsr); /* mxcsr */
+        stl_notaint(ptr + 0x1c, 0x0000ffff); /* mxcsr_mask */
         if (env->hflags & HF_CS64_MASK)
             nb_xmm_regs = 16;
         else
@@ -4423,8 +4423,8 @@ void helper_fxsave(target_ulong ptr, int data64)
           || (env->hflags & HF_CPL_MASK)
           || !(env->hflags & HF_LMA_MASK)) {
             for(i = 0; i < nb_xmm_regs; i++) {
-                stq(addr, env->xmm_regs[i].XMM_Q(0));
-                stq(addr + 8, env->xmm_regs[i].XMM_Q(1));
+                stq_notaint(addr, env->xmm_regs[i].XMM_Q(0));
+                stq_notaint(addr + 8, env->xmm_regs[i].XMM_Q(1));
                 addr += 16;
             }
         }
@@ -4437,9 +4437,9 @@ void helper_fxrstor(target_ulong ptr, int data64)
     CPU86_LDouble tmp;
     target_ulong addr;
 
-    env->fpuc = lduw(ptr);
-    fpus = lduw(ptr + 2);
-    fptag = lduw(ptr + 4);
+    env->fpuc = lduw_notaint(ptr);
+    fpus = lduw_notaint(ptr + 2);
+    fptag = lduw_notaint(ptr + 4);
     env->fpstt = (fpus >> 11) & 7;
     env->fpus = fpus & ~0x3800;
     fptag ^= 0xff;
@@ -4456,8 +4456,8 @@ void helper_fxrstor(target_ulong ptr, int data64)
 
     if (env->cr[4] & CR4_OSFXSR_MASK) {
         /* XXX: finish it */
-        env->mxcsr = ldl(ptr + 0x18);
-        //ldl(ptr + 0x1c);
+        env->mxcsr = ldl_notaint(ptr + 0x18);
+        //ldl_notaint(ptr + 0x1c);
         if (env->hflags & HF_CS64_MASK)
             nb_xmm_regs = 16;
         else
@@ -4468,8 +4468,8 @@ void helper_fxrstor(target_ulong ptr, int data64)
           || (env->hflags & HF_CPL_MASK)
           || !(env->hflags & HF_LMA_MASK)) {
             for(i = 0; i < nb_xmm_regs; i++) {
-                env->xmm_regs[i].XMM_Q(0) = ldq(addr);
-                env->xmm_regs[i].XMM_Q(1) = ldq(addr + 8);
+                env->xmm_regs[i].XMM_Q(0) = ldq_notaint(addr);
+                env->xmm_regs[i].XMM_Q(1) = ldq_notaint(addr + 8);
                 addr += 16;
             }
         }
@@ -4776,8 +4776,8 @@ void helper_reset_inhibit_irq(void)
 void helper_boundw(target_ulong a0, int v)
 {
     int low, high;
-    low = ldsw(a0);
-    high = ldsw(a0 + 2);
+    low = ldsw_notaint(a0);
+    high = ldsw_notaint(a0 + 2);
     v = (int16_t)v;
     if (v < low || v > high) {
         raise_exception(EXCP05_BOUND);
@@ -4787,8 +4787,8 @@ void helper_boundw(target_ulong a0, int v)
 void helper_boundl(target_ulong a0, int v)
 {
     int low, high;
-    low = ldl(a0);
-    high = ldl(a0 + 4);
+    low = ldl_notaint(a0);
+    high = ldl_notaint(a0 + 4);
     if (v < low || v > high) {
         raise_exception(EXCP05_BOUND);
     }

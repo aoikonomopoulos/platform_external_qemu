@@ -140,14 +140,26 @@
 #undef ACCESS_TYPE
 #undef MEMSUFFIX
 
-#define ldub(p) ldub_data(p)
-#define ldsb(p) ldsb_data(p)
-#define lduw(p) lduw_data(p)
-#define ldsw(p) ldsw_data(p)
-#define ldl(p) ldl_data(p)
-#define ldq(p) ldq_data(p)
+#define ldub(p, tag) ldub_data(p, tag)
+#define ldsb(p, tag) ldsb_data(p, tag)
+#define lduw(p, tag) lduw_data(p, tag)
+#define ldsw(p, tag) ldsw_data(p, tag)
+#define ldl(p, tag) ldl_data(p, tag)
+#define ldq(p, tag) ldq_data(p, tag)
 
-#define stb(p, v) stb_data(p, v)
-#define stw(p, v) stw_data(p, v)
-#define stl(p, v) stl_data(p, v)
-#define stq(p, v) stq_data(p, v)
+#define stb(p, v, tag) stb_data(p, v, tag)
+#define stw(p, v, tag) stw_data(p, v, tag)
+#define stl(p, v, tag) stl_data(p, v, tag)
+#define stq(p, v, tag) stq_data(p, v, tag)
+
+#define ldub_notaint(p) ldub_data(p, &_argos_dummy_tag)
+#define ldsb_notaint(p) ldsb_data(p, &_argos_dummy_tag)
+#define lduw_notaint(p) lduw_data(p, &_argos_dummy_tag)
+#define ldsw_notaint(p) ldsw_data(p, &_argos_dummy_tag)
+#define ldl_notaint(p) ldl_data(p, &_argos_dummy_tag)
+#define ldq_notaint(p) ldq_data(p, &_argos_dummy_tag)
+
+#define stb_notaint(p, v) stb_data(p, v, &_argos_dummy_tag)
+#define stw_notaint(p, v) stw_data(p, v, &_argos_dummy_tag)
+#define stl_notaint(p, v) stl_data(p, v, &_argos_dummy_tag)
+#define stq_notaint(p, v) stq_data(p, v, &_argos_dummy_tag)

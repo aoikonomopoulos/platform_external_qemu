@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#include <argos/argos-memmap.h>
+#undef NDEBUG
 #ifndef NDEBUG
 static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #if TCG_TARGET_REG_BITS == 64
@@ -32,6 +34,7 @@ static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #endif
 };
 #endif
+#define NDEBUG
 
 static const int tcg_target_reg_alloc_order[] = {
 #if TCG_TARGET_REG_BITS == 64
@@ -80,6 +83,15 @@ static const int tcg_target_call_oarg_regs[2] = {
     TCG_REG_EAX,
     TCG_REG_EDX
 };
+
+/*
+ * XXX: this is broken when the guest cpu != (x86|arm)
+ * and so is the instrumentation below, which assumes
+ * the CPUState starts with an array of registers.
+ */
+#ifndef CPU_NB_REGS
+#define CPU_NB_REGS ((tcg_target_ulong)-1)
+#endif
 
 static uint8_t *tb_ret_addr;
 
@@ -502,8 +514,18 @@ static inline void tcg_out_modrm_offset(TCGContext *s, int opc, int r,
     tcg_out_modrm_sib_offset(s, opc, r, rm, -1, 0, offset);
 }
 
+static inline void tcg_out_push(TCGContext *s, int reg)
+{
+    tcg_out_opc(s, OPC_PUSH_r32 + LOWREGMASK(reg), 0, reg, 0);
+}
+
+static inline void tcg_out_pop(TCGContext *s, int reg)
+{
+    tcg_out_opc(s, OPC_POP_r32 + LOWREGMASK(reg), 0, reg, 0);
+}
+
 /* Generate dest op= src.  Uses the same ARITH_* codes as tgen_arithi.  */
-static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
+static inline void tgen_arithr_notaint(TCGContext *s, int subop, int dest, int src)
 {
     /* Propagate an opcode prefix, such as P_REXW.  */
     int ext = subop & ~0x7;
@@ -512,19 +534,11 @@ static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
     tcg_out_modrm(s, OPC_ARITH_GvEv + (subop << 3) + ext, dest, src);
 }
 
-static inline void tcg_out_mov(TCGContext *s, TCGType type, int ret, int arg)
-{
-    if (arg != ret) {
-        int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
-        tcg_out_modrm(s, opc, ret, arg);
-    }
-}
-
-static void tcg_out_movi(TCGContext *s, TCGType type,
-                         int ret, tcg_target_long arg)
+static void tcg_out_movi_notaint(TCGContext *s, TCGType type,
+				 int ret, tcg_target_long arg)
 {
     if (arg == 0) {
-        tgen_arithr(s, ARITH_XOR, ret, ret);
+        tgen_arithr_notaint(s, ARITH_XOR, ret, ret);
         return;
     } else if (arg == (uint32_t)arg || type == TCG_TYPE_I32) {
         tcg_out_opc(s, OPC_MOVL_Iv + LOWREGMASK(ret), 0, ret, 0);
@@ -536,6 +550,201 @@ static void tcg_out_movi(TCGContext *s, TCGType type,
         tcg_out_opc(s, OPC_MOVL_Iv + P_REXW + LOWREGMASK(ret), 0, ret, 0);
         tcg_out32(s, arg);
         tcg_out32(s, arg >> 31 >> 1);
+    }
+}
+
+static inline void tcg_out_mov_notaint(TCGContext *s, TCGType type, int ret, int arg)
+{
+    int opc;
+
+    if (arg == ret)
+	    return;
+    opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+    tcg_out_modrm(s, opc, ret, arg);
+}
+
+static inline void tcg_out_ld_notaint(TCGContext *s, TCGType type, int ret,
+                              int arg1, tcg_target_long arg2)
+{
+    int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+    tcg_out_modrm_offset(s, opc, ret, arg1, arg2);
+}
+
+static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
+                              int arg1, tcg_target_long arg2);
+
+static argos_rtag_t native_reg_tags[CPU_NB_REGS];
+static inline argos_rtag_t *
+tag_for_reg(TCGContext *s, int reg, const char *func, const char *file, int l)
+{
+	if (reg < 0) {
+		fprintf(stderr, "reg (%d) < 0\n", reg);
+		abort();
+	}
+	if (reg >= CPU_NB_REGS) {
+		fprintf(stderr, "reg (%d) >= %d\n", reg, CPU_NB_REGS);
+		abort();
+	}
+
+	return &native_reg_tags[reg];
+}
+
+#define tag_for_reg(_s, _reg) tag_for_reg(_s, _reg, __func__, __FILE__, __LINE__)
+
+/* Generate dest op= src.  Uses the same ARITH_* codes as tgen_arithi.  */
+static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
+{
+    argos_rtag_t *tag = tag_for_reg(s, dest);
+    tgen_arithr_notaint(s, subop, dest, src);
+    /* unconditionally clear the tag for the destination register */
+    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+}
+
+static void tcg_out_movi(TCGContext *s, TCGType type,
+			 int ret, tcg_target_long arg)
+{
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
+    tcg_out_movi_notaint(s, type, ret, arg);
+    if (argos_enabled && (tag_ret != NULL)) {
+	    tcg_out_movi_notaint(s, type, TCG_REG_ARGOS, 0);
+	    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
+    }
+}
+
+static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1, tcg_target_long arg2)
+{
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
+    tcg_out_ld_notaint(s, type, ret, arg1, arg2);
+    if (!argos_enabled || (!tag_ret)) {
+	    return;
+    }
+
+    if (arg1 != TCG_AREG0)
+	    abort();
+    /* XXX: the following assumes regs come first in the CPUState */
+    if (arg2 >= (CPU_NB_REGS * sizeof(target_ulong))) {
+	    /* XXX: not a write to a 'hard' guest register, ignore for now */
+	    return;
+    }
+    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
+    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
+}
+
+enum loadstore {
+    IS_LOAD = 1,
+    IS_STORE,
+};
+
+/*
+ * Propagate taint for the 4-byte tag for the address stored in TCG_REG_ARGOS to the
+ * address of temptag. The loadstore parameter determines the direction.
+ */
+static inline void tcg_out_ldtag(TCGContext *s, TCGType type, tcg_target_long temptag, enum loadstore ls)
+{
+    /* the memory virtual address is in TCG_REG_ARGOS */
+    int scratch = TCG_REG_EAX;
+    tcg_out_push(s, scratch);
+    tcg_out_ld_notaint(s, type, scratch, -1, (tcg_target_long)&phys_ram_base);
+    tgen_arithr_notaint(s, ARITH_SUB, TCG_REG_ARGOS, scratch);
+    tcg_out_ld_notaint(s, type, scratch, -1,
+		       (tcg_target_long)&argos_memmap);
+    tgen_arithr_notaint(s, ARITH_ADD, TCG_REG_ARGOS, scratch);
+
+    if (ls == IS_LOAD) {
+	    tcg_out_ld_notaint(s, type, scratch, TCG_REG_ARGOS, 0);
+	    /* store it to the tag of 'ret' */
+	    tcg_out_st_notaint(s, type, scratch, -1, temptag);
+    } else {
+	    tcg_out_ld_notaint(s, type, scratch, -1, temptag);
+	    tcg_out_st_notaint(s, type, scratch, TCG_REG_ARGOS, 0);
+    }
+    tcg_out_pop(s, scratch);
+}
+
+static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
+                              int arg1, tcg_target_long arg2)
+{
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
+    if (!argos_enabled || !tag_ret) {
+        tcg_out_ld_notaint(s, type, ret, arg1, arg2);
+	return;
+    }
+    /*
+     * ret is the register we're loading to,
+     * arg1 is rm is the base register used for the indirect access
+     * arg2 is the displacement.
+     * Load the effective address to the register reserved for
+     * argos, and subtract phys_ram_base.
+     * We need to do the lea calculation before the actual load,
+     * as the load might clobber one of the registers involved.
+     */
+    tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
+    tcg_out_ld_notaint(s, type, ret, arg1, arg2);
+
+    tcg_out_ldtag(s, type, (tcg_target_long)tag_ret, IS_LOAD);
+}
+
+static inline void tcg_out_st_notaint(TCGContext *s, TCGType type, int arg,
+                              int arg1, tcg_target_long arg2)
+{
+    int opc = OPC_MOVL_EvGv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+    tcg_out_modrm_offset(s, opc, arg, arg1, arg2);
+}
+
+static inline void tcg_out_st(TCGContext *s, TCGType type, int arg,
+                              int arg1, tcg_target_long arg2)
+{
+    argos_rtag_t *tag_arg = tag_for_reg(s, arg);
+    if (!argos_enabled || !tag_arg) {
+	    tcg_out_st_notaint(s, type, arg, arg1, arg2);
+	    return;
+    }
+    tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, arg1, arg2);
+    tcg_out_st_notaint(s, type, arg, arg1, arg2);
+    tcg_out_ldtag(s, type, (tcg_target_long)tag_arg, IS_STORE);
+}
+
+static inline void tcg_out_streg(TCGContext *s, TCGType type, int arg,
+				 int arg1, tcg_target_long arg2)
+{
+    argos_rtag_t *tag_arg = tag_for_reg(s, arg);
+    if (!argos_enabled || !tag_arg) {
+	    tcg_out_st_notaint(s, type, arg, arg1, arg2);
+	    return;
+    }
+    if (arg1 == TCG_REG_ESP) {
+	    /*
+	     * the native code stack does not point to guest memory,
+	     * it's mainly used to pass arguments to helpers
+	     */
+	    tcg_out_st_notaint(s, type, arg, arg1, arg2);
+	    return;
+    } else if (arg1 != TCG_AREG0) {
+	    tcg_out_st(s, type, arg, arg1, arg2);
+	    return;
+    }
+    tcg_out_st_notaint(s, type, arg, arg1, arg2);
+    if (arg2 >= (CPU_NB_REGS * sizeof(target_ulong))) {
+	    /* XXX: not a write to a 'hard' guest register, ignore for now */
+	    return;
+    }
+    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
+    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
+}
+
+static inline void tcg_out_mov(TCGContext *s, TCGType type, int ret, int arg)
+{
+    argos_rtag_t *tag_arg = tag_for_reg(s, arg);
+    argos_rtag_t *tag_ret = tag_for_reg(s, ret);
+    if (arg != ret) {
+        int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
+        tcg_out_modrm(s, opc, ret, arg);
+	if (argos_enabled && tag_ret && tag_arg) {
+		/* XXX: type matters! */
+		tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
+		tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
+	}
     }
 }
 
@@ -552,35 +761,15 @@ static inline void tcg_out_pushi(TCGContext *s, tcg_target_long val)
     }
 }
 
-static inline void tcg_out_push(TCGContext *s, int reg)
-{
-    tcg_out_opc(s, OPC_PUSH_r32 + LOWREGMASK(reg), 0, reg, 0);
-}
-
-static inline void tcg_out_pop(TCGContext *s, int reg)
-{
-    tcg_out_opc(s, OPC_POP_r32 + LOWREGMASK(reg), 0, reg, 0);
-}
-
-static inline void tcg_out_ld(TCGContext *s, TCGType type, int ret,
-                              int arg1, tcg_target_long arg2)
-{
-    int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
-    tcg_out_modrm_offset(s, opc, ret, arg1, arg2);
-}
-
-static inline void tcg_out_st(TCGContext *s, TCGType type, int arg,
-                              int arg1, tcg_target_long arg2)
-{
-    int opc = OPC_MOVL_EvGv + (type == TCG_TYPE_I64 ? P_REXW : 0);
-    tcg_out_modrm_offset(s, opc, arg, arg1, arg2);
-}
-
 static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
 {
     /* Propagate an opcode prefix, such as P_DATA16.  */
     int ext = subopc & ~0x7;
     subopc &= 0x7;
+
+    /* XXX: be smarter about when to clear the tag */
+    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, reg));
 
     if (count == 1) {
         tcg_out_modrm(s, OPC_SHIFT_1 + ext, subopc, reg);
@@ -600,10 +789,30 @@ static inline void tcg_out_rolw_8(TCGContext *s, int reg)
     tcg_out_shifti(s, SHIFT_ROL + P_DATA16, reg, 8);
 }
 
+static void tgen_arithi_notaint(TCGContext *s, int c, int r0,
+                                tcg_target_long val, int cf);
+
+static inline void tcg_extX_propagate(TCGContext *s, int dest, int src, int size)
+{
+    argos_rtag_t *dest_tag = tag_for_reg(s, dest);
+    int scratch = TCG_REG_EAX;
+    int mask;
+
+    mask = (1 << (8 * size)) - 1;
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tgen_arithi_notaint(s, ARITH_AND, TCG_REG_ARGOS, mask, 0);
+    tcg_out_push(s, scratch);
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)dest_tag);
+    tgen_arithr_notaint(s, ARITH_OR, scratch, TCG_REG_ARGOS);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)dest_tag);
+    tcg_out_pop(s, scratch);
+}
+
 static inline void tcg_out_ext8u(TCGContext *s, int dest, int src)
 {
     /* movzbl */
     assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_extX_propagate(s, dest, src, 1);
     tcg_out_modrm(s, OPC_MOVZBL + P_REXB_RM, dest, src);
 }
 
@@ -611,28 +820,72 @@ static void tcg_out_ext8s(TCGContext *s, int dest, int src, int rexw)
 {
     /* movsbl */
     assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_extX_propagate(s, dest, src, 1);
     tcg_out_modrm(s, OPC_MOVSBL + P_REXB_RM + rexw, dest, src);
 }
 
 static inline void tcg_out_ext16u(TCGContext *s, int dest, int src)
 {
     /* movzwl */
+    tcg_extX_propagate(s, dest, src, 2);
     tcg_out_modrm(s, OPC_MOVZWL, dest, src);
 }
 
 static inline void tcg_out_ext16s(TCGContext *s, int dest, int src, int rexw)
 {
     /* movsw[lq] */
+    tcg_extX_propagate(s, dest, src, 2);
     tcg_out_modrm(s, OPC_MOVSWL + rexw, dest, src);
 }
 
 static inline void tcg_out_ext32u(TCGContext *s, int dest, int src)
 {
     /* 32-bit mov zero extends.  */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, dest));
     tcg_out_modrm(s, OPC_MOVL_GvEv, dest, src);
 }
 
 static inline void tcg_out_ext32s(TCGContext *s, int dest, int src)
+{
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, dest));
+    tcg_out_modrm(s, OPC_MOVSLQ, dest, src);
+}
+
+static inline void tcg_out_ext8u_notaint(TCGContext *s, int dest, int src)
+{
+    /* movzbl */
+    assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_out_modrm(s, OPC_MOVZBL + P_REXB_RM, dest, src);
+}
+
+static void tcg_out_ext8s_notaint(TCGContext *s, int dest, int src, int rexw)
+{
+    /* movsbl */
+    assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_out_modrm(s, OPC_MOVSBL + P_REXB_RM + rexw, dest, src);
+}
+
+static inline void tcg_out_ext16u_notaint(TCGContext *s, int dest, int src)
+{
+    /* movzwl */
+    tcg_out_modrm(s, OPC_MOVZWL, dest, src);
+}
+
+static inline void tcg_out_ext16s_notaint(TCGContext *s, int dest, int src, int rexw)
+{
+    /* movsw[lq] */
+    tcg_out_modrm(s, OPC_MOVSWL + rexw, dest, src);
+}
+
+static inline void tcg_out_ext32u_notaint(TCGContext *s, int dest, int src)
+{
+    /* 32-bit mov zero extends.  */
+    tcg_out_modrm(s, OPC_MOVL_GvEv, dest, src);
+}
+
+static inline void tcg_out_ext32s_notaint(TCGContext *s, int dest, int src)
 {
     tcg_out_modrm(s, OPC_MOVSLQ, dest, src);
 }
@@ -642,7 +895,7 @@ static inline void tcg_out_bswap64(TCGContext *s, int reg)
     tcg_out_opc(s, OPC_BSWAP + P_REXW + LOWREGMASK(reg), 0, reg, 0);
 }
 
-static void tgen_arithi(TCGContext *s, int c, int r0,
+static void tgen_arithi_notaint(TCGContext *s, int c, int r0,
                         tcg_target_long val, int cf)
 {
     int rexw = 0;
@@ -671,7 +924,7 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
     if (c == ARITH_AND) {
         if (TCG_TARGET_REG_BITS == 64) {
             if (val == 0xffffffffu) {
-                tcg_out_ext32u(s, r0, r0);
+                tcg_out_ext32u_notaint(s, r0, r0);
                 return;
             }
             if (val == (uint32_t)val) {
@@ -680,11 +933,11 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
             }
         }
         if (val == 0xffu && (r0 < 4 || TCG_TARGET_REG_BITS == 64)) {
-            tcg_out_ext8u(s, r0, r0);
+            tcg_out_ext8u_notaint(s, r0, r0);
             return;
         }
         if (val == 0xffffu) {
-            tcg_out_ext16u(s, r0, r0);
+            tcg_out_ext16u_notaint(s, r0, r0);
             return;
         }
     }
@@ -701,6 +954,24 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
     }
 
     tcg_abort();
+}
+
+static void tgen_arithi(TCGContext *s, int c, int r0,
+                        tcg_target_long val, int cf)
+{
+    argos_rtag_t *tag = tag_for_reg(s, r0);
+
+    /*
+     * unconditionally clear the tag for the destination register
+     * XXX: needs to be conditional on the arithmetic operation
+     */
+    if ((c == ARITH_AND) && (val == 0xfffffffe)) {
+        /* XXX: gross hack: preserve taint for the ANDed PC */
+    } else {
+        tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+        tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+    }
+    tgen_arithi_notaint(s, c, r0, val, cf);
 }
 
 static void tcg_out_addi(TCGContext *s, int reg, tcg_target_long val)
@@ -1057,6 +1328,25 @@ static inline void tcg_out_tlb_load(TCGContext *s, int addrlo_idx,
 }
 #endif
 
+static void tcg_out_ldtag_partial(TCGContext *s, int dst, int base, tcg_target_long ofs, int sizeop)
+{
+    int mask, scratch = TCG_REG_EAX;
+
+    /* we don't deal with loads crossing 4-byte boundaries */
+    assert(((ofs & 3) + (1 << sizeop)) <= 4);
+
+    mask = (1 << (((sizeop & 3) + 1) * 8)) - 1;
+    mask <<= (ofs & 0x3) * 8;
+    /* get the 4-byte tag */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, base, ofs & ~0x3);
+    tgen_arithi_notaint(s, ARITH_AND, TCG_REG_ARGOS, mask, 0);
+    tcg_out_push(s, scratch);
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)tag_for_reg(s, dst));
+    tgen_arithr_notaint(s, ARITH_OR, TCG_REG_ARGOS, scratch);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, dst));
+    tcg_out_pop(s, scratch);
+}
+
 static void tcg_out_qemu_ld_direct(TCGContext *s, int datalo, int datahi,
                                    int base, tcg_target_long ofs, int sizeop)
 {
@@ -1067,18 +1357,22 @@ static void tcg_out_qemu_ld_direct(TCGContext *s, int datalo, int datahi,
 #endif
     switch (sizeop) {
     case 0:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVZBL, datalo, base, ofs);
         break;
     case 0 | 4:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVSBL + P_REXW, datalo, base, ofs);
         break;
     case 1:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVZWL, datalo, base, ofs);
         if (bswap) {
             tcg_out_rolw_8(s, datalo);
         }
         break;
     case 1 | 4:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         if (bswap) {
             tcg_out_modrm_offset(s, OPC_MOVZWL, datalo, base, ofs);
             tcg_out_rolw_8(s, datalo);
@@ -1185,8 +1479,10 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args,
         tcg_out_mov(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx++],
                     args[addrlo_idx + 1]);
     }
-    tcg_out_movi(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx],
+    tcg_out_movi(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx++],
                  mem_index);
+    tcg_out_movi(s, TCG_TYPE_I32, tcg_target_call_iarg_regs[arg_idx],
+		 (tcg_target_long)tag_for_reg(s, data_reg));
     tcg_out_calli(s, (tcg_target_long)qemu_ld_helpers[s_bits]);
 
     switch(opc) {
@@ -1252,6 +1548,26 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args,
 #endif
 }
 
+static void tcg_out_sttag_partial(TCGContext *s, int src, int base, tcg_target_long ofs, int sizeop)
+{
+    int mask, scratch = TCG_REG_EAX;
+
+    /* we don't deal with loads crossing 4-byte boundaries */
+    assert(((ofs & 3) + (1 << sizeop)) <= 4);
+
+    mask = (1 << (((sizeop & 3) + 1) * 8)) - 1;
+    mask <<= (ofs & 0x3) * 8;
+    tcg_out_push(s, scratch);
+    /* get the 4-byte tag for the reg */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tgen_arithi_notaint(s, ARITH_AND, TCG_REG_ARGOS, mask, 0);
+    /* get old value of 4-byte tag for the memory location */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, base, ofs & 3);
+    tgen_arithr_notaint(s, ARITH_OR, TCG_REG_ARGOS, scratch);
+    tcg_out_pop(s, scratch);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, base, ofs & 3);
+}
+
 static void tcg_out_qemu_st_direct(TCGContext *s, int datalo, int datahi,
                                    int base, tcg_target_long ofs, int sizeop)
 {
@@ -1268,9 +1584,11 @@ static void tcg_out_qemu_st_direct(TCGContext *s, int datalo, int datahi,
 
     switch (sizeop) {
     case 0:
+        tcg_out_sttag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVB_EvGv + P_REXB_R, datalo, base, ofs);
         break;
     case 1:
+        tcg_out_sttag_partial(s, datalo, base, ofs, sizeop);
         if (bswap) {
             tcg_out_mov(s, TCG_TYPE_I32, scratch, datalo);
             tcg_out_rolw_8(s, scratch);
@@ -1363,11 +1681,16 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args,
         tcg_out_mov(s, TCG_TYPE_I32, TCG_REG_EDX, data_reg);
         if (opc == 3) {
             tcg_out_mov(s, TCG_TYPE_I32, TCG_REG_ECX, data_reg2);
-            tcg_out_pushi(s, mem_index);
-            stack_adjust = 4;
+            tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS,
+                                 (tcg_target_long)tag_for_reg(s, data_reg));
+            tcg_out_push(s, TCG_REG_ARGOS);
+            tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, mem_index);
+            tcg_out_push(s, TCG_REG_ARGOS);
+            stack_adjust = 8;
         } else {
             tcg_out_movi(s, TCG_TYPE_I32, TCG_REG_ECX, mem_index);
-            stack_adjust = 0;
+            tcg_out_pushi(s, (tcg_target_long)tag_for_reg(s, data_reg));
+            stack_adjust = 4;
         }
     } else {
         if (opc == 3) {
@@ -1429,6 +1752,13 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args,
 #endif
 }
 
+/* need these to take effect in the rest of tcg.c as well */
+#define tcg_out_ld(_state, _type, _reg, _memreg, _memoff)	\
+	tcg_out_ldreg(_state, _type, _reg, _memreg, _memoff)
+
+#define tcg_out_st(_state, _type, _reg, _memreg, _memoff)	\
+	tcg_out_streg(_state, _type, _reg, _memreg, _memoff)
+
 static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
                               const TCGArg *args, const int *const_args)
 {
@@ -1484,6 +1814,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
     case INDEX_op_movi_i32:
         tcg_out_movi(s, TCG_TYPE_I32, args[0], args[1]);
         break;
+	/* XXX: the following bunch of ops need argos love */
     OP_32_64(ld8u):
         /* Note that we can ignore REXW for the zero-extend to 64-bit.  */
         tcg_out_modrm_offset(s, OPC_MOVZBL, args[0], args[1], args[2]);
@@ -1524,6 +1855,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         /* For 3-operand addition, use LEA.  */
         if (args[0] != args[1]) {
             TCGArg a0 = args[0], a1 = args[1], a2 = args[2], c3 = 0;
+	    argos_rtag_t *tag;
 
             if (const_args[2]) {
                 c3 = a2, a2 = -1;
@@ -1533,8 +1865,11 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
                 tgen_arithr(s, ARITH_ADD + rexw, a0, a1);
                 break;
             }
-
+	    tag = tag_for_reg(s, a0);
             tcg_out_modrm_sib_offset(s, OPC_LEA + rexw, a0, a1, a2, 0, c3);
+	    /* unconditionally clear the tag for the destination register */
+	    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+	    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
             break;
         }
         c = ARITH_ADD;
@@ -1979,6 +2314,15 @@ static void tcg_target_init(TCGContext *s)
 
     tcg_regset_clear(s->reserved_regs);
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_ESP);
+    /*
+     * Since we're holding the taint information for the register
+     * in memory (i.e. not in xmm regs), we'll need to copy
+     * from memory to memory at the tcg->native translation level.
+     * The easiest way to do that is to reserve a register to
+     * use as intermediate.
+     */
+    tcg_regset_set_reg(s->reserved_regs, TCG_REG_ARGOS);
 
     tcg_add_target_add_op_defs(x86_op_defs);
 }
+

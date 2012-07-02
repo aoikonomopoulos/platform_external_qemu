@@ -240,8 +240,8 @@ static inline CPU86_LDouble helper_fldt(target_ulong ptr)
 {
     CPU86_LDoubleU temp;
 
-    temp.l.lower = ldq(ptr);
-    temp.l.upper = lduw(ptr + 8);
+    temp.l.lower = ldq_notaint(ptr);
+    temp.l.upper = lduw_notaint(ptr + 8);
     return temp.d;
 }
 
@@ -250,8 +250,8 @@ static inline void helper_fstt(CPU86_LDouble f, target_ulong ptr)
     CPU86_LDoubleU temp;
 
     temp.d = f;
-    stq(ptr, temp.l.lower);
-    stw(ptr + 8, temp.l.upper);
+    stq_notaint(ptr, temp.l.lower);
+    stw_notaint(ptr + 8, temp.l.upper);
 }
 
 #endif /* USE_X86LDOUBLE */

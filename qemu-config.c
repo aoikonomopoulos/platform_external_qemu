@@ -101,6 +101,9 @@ static QemuOptsList qemu_chardev_opts = {
             .name = "port",
             .type = QEMU_OPT_STRING,
         },{
+            .name = "socket",
+            .type = QEMU_OPT_STRING,
+        },{
             .name = "localaddr",
             .type = QEMU_OPT_STRING,
         },{

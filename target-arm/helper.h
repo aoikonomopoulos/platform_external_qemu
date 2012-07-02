@@ -473,5 +473,6 @@ DEF_HELPER_2(neon_qzip16, void, i32, i32)
 DEF_HELPER_2(neon_qzip32, void, i32, i32)
 DEF_HELPER_1(neon_vldst_all, void, i32)
 
+DEF_HELPER_1(check_pc_taint, void, env)
 #include "helper-android.h"
 #include "def-helper.h"

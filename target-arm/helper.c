@@ -779,7 +779,7 @@ static void do_interrupt_v7m(CPUARMState *env)
     case EXCP_BKPT:
         if (semihosting_enabled) {
             int nr;
-            nr = lduw_code(env->regs[15]) & 0xff;
+            nr = lduw_code_notaint(env->regs[15]) & 0xff;
             if (nr == 0xab) {
                 env->regs[15] += 2;
                 env->regs[0] = do_arm_semihosting(env);
@@ -856,9 +856,9 @@ void do_interrupt(CPUARMState *env)
         if (semihosting_enabled) {
             /* Check for semihosting interrupt.  */
             if (env->thumb) {
-                mask = lduw_code(env->regs[15] - 2) & 0xff;
+                mask = lduw_code_notaint(env->regs[15] - 2) & 0xff;
             } else {
-                mask = ldl_code(env->regs[15] - 4) & 0xffffff;
+                mask = ldl_code_notaint(env->regs[15] - 4) & 0xffffff;
             }
             /* Only intercept calls from privileged modes, to provide some
                semblance of security.  */
@@ -878,7 +878,7 @@ void do_interrupt(CPUARMState *env)
     case EXCP_BKPT:
         /* See if this is a semihosting syscall.  */
         if (env->thumb && semihosting_enabled) {
-            mask = lduw_code(env->regs[15]) & 0xff;
+            mask = lduw_code_notaint(env->regs[15]) & 0xff;
             if (mask == 0xab
                   && (env->uncached_cpsr & CPSR_M) != ARM_CPU_MODE_USR) {
                 env->regs[15] += 2;
@@ -1399,6 +1399,14 @@ static uint32_t extended_mpu_ap_bits(uint32_t val)
     return ret;
 }
 
+void HELPER(check_pc_taint)(CPUState *env)
+{
+    if (env->regtags[15] != 0) {
+        fprintf(stderr, "PC is tainted!\n");
+        abort();
+    }
+}
+
 static unsigned long
 vtop(CPUState *env, uint32_t vaddr)
 {
@@ -1420,7 +1428,8 @@ vtop(CPUState *env, uint32_t vaddr)
 		if (tlb_filled)
 			cpu_abort(env, "No mapping for vaddr %#x\n", vaddr);
 		/* XXX: cpu_arm_handle_mmu_fault()? */
-		tlb_fill(vaddr, !0, mmu_idx, GETPC());
+		printf("filling tlb (pc=%p)\n", GETPC());
+		tlb_fill(vaddr, 0x1, mmu_idx, GETPC());
 		tlb_filled = !0;
 	}
 
@@ -1428,6 +1437,11 @@ vtop(CPUState *env, uint32_t vaddr)
 	printf("vtop: v%#x -> %#x (idx = %d, mmu_idx = %d)\n", vaddr, paddr, idx, mmu_idx);
 	if (vaddr == paddr)
 		cpu_abort(env, "vaddr == paddr\n");
+	if ((((uint32_t)phys_ram_base + ram_size) < paddr) ||
+	    (paddr < (uint32_t)phys_ram_base)) {
+		cpu_abort(env, "phys_ram_base = %p, ram_size = %#lx, paddr = %#lx\n",
+			  phys_ram_base, ram_size, (unsigned long)paddr);
+	}
 	return paddr - (uint32_t)phys_ram_base;
 }
 
@@ -1459,7 +1473,7 @@ void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
         if (arm_feature(env, ARM_FEATURE_OMAPCP))
             op2 = 0;
         switch (op2) {
-        case 0:
+            case 0:
                 if (!arm_feature(env, ARM_FEATURE_XSCALE))
                 env->cp15.c1_sys = val;
             /* ??? Lots of these bits are not implemented.  */
@@ -1529,11 +1543,14 @@ void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
 		env->regs[(insn >> 12) & 0xf] = argos_memmap_istainted(vtop(env, val));
 		break;
 	case 6:
-		loglevel |= CPU_LOG_TB_OP;
+		printf("enabling logging (loglevel = %d)\n", loglevel);
+		loglevel |= CPU_LOG_TB_OP|CPU_LOG_TB_OP_OPT|CPU_LOG_TB_OUT_ASM|CPU_LOG_EXEC;
 		cpu_set_log_filename("/tmp/tcg.log");
 		break;
 	case 7:
-		loglevel &= CPU_LOG_TB_OP;
+		printf("disabling logging (loglevel now = %d)\n", loglevel);
+		loglevel &= ~(CPU_LOG_TB_OP|CPU_LOG_TB_OP_OPT|CPU_LOG_TB_OUT_ASM|CPU_LOG_EXEC);
+		printf("loglevel after = %d\n", loglevel);
 		break;
         default:
             goto bad_reg;
@@ -3217,3 +3234,11 @@ void HELPER(set_teecr)(CPUState *env, uint32_t val)
         tb_flush(env);
     }
 }
+
+#if 0
+void HELPER(argos_ld)(CPUState *env, uint32_t addr, uint32_t mem_index, uint32_t ret)
+{
+	printf("env %p, addr %#x, mem_index %#x, ret %#x\n", env, addr, mem_index, ret);
+	abort();
+}
+#endif

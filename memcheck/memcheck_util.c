@@ -18,6 +18,7 @@
 #include "qemu-common.h"
 #include "android/utils/path.h"
 #include "cpu.h"
+#include "cpu-all.h"
 #include "memcheck_util.h"
 #include "memcheck_proc_management.h"
 #include "memcheck_logging.h"
@@ -92,10 +93,10 @@ memcheck_get_guest_buffer(void* qemu_address,
     /* Byte-by-byte copying back and forth between guest's and emulator's memory
      * appears to be efficient enough (at least on small blocks used in
      * memchecker), so there is no real need to optimize it by aligning guest
-     * buffer to 32 bits and use ld/stl_user instead of ld/stub_user to
+     * buffer to 32 bits and use ld/stl_user_notaint instead of ld/stub_user to
      * read / write guest's memory. */
     while (buffer_size) {
-        *(uint8_t*)qemu_address = ldub_user(guest_address);
+        *(uint8_t*)qemu_address = ldub_user_notaint(guest_address);
         qemu_address = (uint8_t*)qemu_address + 1;
         guest_address++;
         buffer_size--;
@@ -108,7 +109,7 @@ memcheck_set_guest_buffer(target_ulong guest_address,
                           size_t buffer_size)
 {
     while (buffer_size) {
-        stb_user(guest_address, *(uint8_t*)qemu_address);
+        stb_user_notaint(guest_address, *(uint8_t*)qemu_address);
         guest_address++;
         qemu_address = (uint8_t*)qemu_address + 1;
         buffer_size--;
@@ -124,7 +125,7 @@ memcheck_get_guest_string(char* qemu_str,
 
     if (qemu_buffer_size > 1) {
         for (copied = 0; copied < qemu_buffer_size - 1; copied++) {
-            qemu_str[copied] = ldub_user(guest_str + copied);
+            qemu_str[copied] = ldub_user_notaint(guest_str + copied);
             if (qemu_str[copied] == '\0') {
                 return copied;
             }
@@ -143,7 +144,7 @@ memcheck_get_guest_kernel_string(char* qemu_str,
 
     if (qemu_buffer_size > 1) {
         for (copied = 0; copied < qemu_buffer_size - 1; copied++) {
-            qemu_str[copied] = ldub_kernel(guest_str + copied);
+            qemu_str[copied] = ldub_kernel_notaint(guest_str + copied);
             if (qemu_str[copied] == '\0') {
                 return copied;
             }
@@ -160,19 +161,19 @@ memcheck_get_guest_kernel_string(char* qemu_str,
 void
 memcheck_fail_alloc(target_ulong guest_address)
 {
-    stl_user(ALLOC_RES_ADDRESS(guest_address), 0);
+    stl_user_notaint(ALLOC_RES_ADDRESS(guest_address), 0);
 }
 
 void
 memcheck_fail_free(target_ulong guest_address)
 {
-    stl_user(FREE_RES_ADDRESS(guest_address), 0);
+    stl_user_notaint(FREE_RES_ADDRESS(guest_address), 0);
 }
 
 void
 memcheck_fail_query(target_ulong guest_address)
 {
-    stl_user(QUERY_RES_ADDRESS(guest_address), 0);
+    stl_user_notaint(QUERY_RES_ADDRESS(guest_address), 0);
 }
 
 // =============================================================================
