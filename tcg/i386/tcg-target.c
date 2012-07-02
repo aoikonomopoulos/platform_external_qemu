@@ -767,6 +767,10 @@ static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
     int ext = subopc & ~0x7;
     subopc &= 0x7;
 
+    /* XXX: be smarter about when to clear the tag */
+    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, reg));
+
     if (count == 1) {
         tcg_out_modrm(s, OPC_SHIFT_1 + ext, subopc, reg);
     } else {
@@ -785,10 +789,30 @@ static inline void tcg_out_rolw_8(TCGContext *s, int reg)
     tcg_out_shifti(s, SHIFT_ROL + P_DATA16, reg, 8);
 }
 
+static void tgen_arithi_notaint(TCGContext *s, int c, int r0,
+                                tcg_target_long val, int cf);
+
+static inline void tcg_extX_propagate(TCGContext *s, int dest, int src, int size)
+{
+    argos_rtag_t *dest_tag = tag_for_reg(s, dest);
+    int scratch = TCG_REG_EAX;
+    int mask;
+
+    mask = (1 << (8 * size)) - 1;
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tgen_arithi_notaint(s, ARITH_AND, TCG_REG_ARGOS, mask, 0);
+    tcg_out_push(s, scratch);
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)dest_tag);
+    tgen_arithr_notaint(s, ARITH_OR, scratch, TCG_REG_ARGOS);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)dest_tag);
+    tcg_out_pop(s, scratch);
+}
+
 static inline void tcg_out_ext8u(TCGContext *s, int dest, int src)
 {
     /* movzbl */
     assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_extX_propagate(s, dest, src, 1);
     tcg_out_modrm(s, OPC_MOVZBL + P_REXB_RM, dest, src);
 }
 
@@ -796,28 +820,72 @@ static void tcg_out_ext8s(TCGContext *s, int dest, int src, int rexw)
 {
     /* movsbl */
     assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_extX_propagate(s, dest, src, 1);
     tcg_out_modrm(s, OPC_MOVSBL + P_REXB_RM + rexw, dest, src);
 }
 
 static inline void tcg_out_ext16u(TCGContext *s, int dest, int src)
 {
     /* movzwl */
+    tcg_extX_propagate(s, dest, src, 2);
     tcg_out_modrm(s, OPC_MOVZWL, dest, src);
 }
 
 static inline void tcg_out_ext16s(TCGContext *s, int dest, int src, int rexw)
 {
     /* movsw[lq] */
+    tcg_extX_propagate(s, dest, src, 2);
     tcg_out_modrm(s, OPC_MOVSWL + rexw, dest, src);
 }
 
 static inline void tcg_out_ext32u(TCGContext *s, int dest, int src)
 {
     /* 32-bit mov zero extends.  */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, dest));
     tcg_out_modrm(s, OPC_MOVL_GvEv, dest, src);
 }
 
 static inline void tcg_out_ext32s(TCGContext *s, int dest, int src)
+{
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, dest));
+    tcg_out_modrm(s, OPC_MOVSLQ, dest, src);
+}
+
+static inline void tcg_out_ext8u_notaint(TCGContext *s, int dest, int src)
+{
+    /* movzbl */
+    assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_out_modrm(s, OPC_MOVZBL + P_REXB_RM, dest, src);
+}
+
+static void tcg_out_ext8s_notaint(TCGContext *s, int dest, int src, int rexw)
+{
+    /* movsbl */
+    assert(src < 4 || TCG_TARGET_REG_BITS == 64);
+    tcg_out_modrm(s, OPC_MOVSBL + P_REXB_RM + rexw, dest, src);
+}
+
+static inline void tcg_out_ext16u_notaint(TCGContext *s, int dest, int src)
+{
+    /* movzwl */
+    tcg_out_modrm(s, OPC_MOVZWL, dest, src);
+}
+
+static inline void tcg_out_ext16s_notaint(TCGContext *s, int dest, int src, int rexw)
+{
+    /* movsw[lq] */
+    tcg_out_modrm(s, OPC_MOVSWL + rexw, dest, src);
+}
+
+static inline void tcg_out_ext32u_notaint(TCGContext *s, int dest, int src)
+{
+    /* 32-bit mov zero extends.  */
+    tcg_out_modrm(s, OPC_MOVL_GvEv, dest, src);
+}
+
+static inline void tcg_out_ext32s_notaint(TCGContext *s, int dest, int src)
 {
     tcg_out_modrm(s, OPC_MOVSLQ, dest, src);
 }
@@ -827,26 +895,14 @@ static inline void tcg_out_bswap64(TCGContext *s, int reg)
     tcg_out_opc(s, OPC_BSWAP + P_REXW + LOWREGMASK(reg), 0, reg, 0);
 }
 
-static void tgen_arithi(TCGContext *s, int c, int r0,
+static void tgen_arithi_notaint(TCGContext *s, int c, int r0,
                         tcg_target_long val, int cf)
 {
-    argos_rtag_t *tag = tag_for_reg(s, r0);
     int rexw = 0;
 
     if (TCG_TARGET_REG_BITS == 64) {
         rexw = c & -8;
         c &= 7;
-    }
-
-    /*
-     * unconditionally clear the tag for the destination register
-     * XXX: needs to be conditional on the arithmetic operation
-     */
-    if ((c == ARITH_AND) && (val == 0xfffffffe)) {
-        /* XXX: gross hack: preserve taint for the ANDed PC */
-    } else {
-        tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
-        tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
     }
 
     /* ??? While INC is 2 bytes shorter than ADDL $1, they also induce
@@ -868,7 +924,7 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
     if (c == ARITH_AND) {
         if (TCG_TARGET_REG_BITS == 64) {
             if (val == 0xffffffffu) {
-                tcg_out_ext32u(s, r0, r0);
+                tcg_out_ext32u_notaint(s, r0, r0);
                 return;
             }
             if (val == (uint32_t)val) {
@@ -877,11 +933,11 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
             }
         }
         if (val == 0xffu && (r0 < 4 || TCG_TARGET_REG_BITS == 64)) {
-            tcg_out_ext8u(s, r0, r0);
+            tcg_out_ext8u_notaint(s, r0, r0);
             return;
         }
         if (val == 0xffffu) {
-            tcg_out_ext16u(s, r0, r0);
+            tcg_out_ext16u_notaint(s, r0, r0);
             return;
         }
     }
@@ -898,6 +954,24 @@ static void tgen_arithi(TCGContext *s, int c, int r0,
     }
 
     tcg_abort();
+}
+
+static void tgen_arithi(TCGContext *s, int c, int r0,
+                        tcg_target_long val, int cf)
+{
+    argos_rtag_t *tag = tag_for_reg(s, r0);
+
+    /*
+     * unconditionally clear the tag for the destination register
+     * XXX: needs to be conditional on the arithmetic operation
+     */
+    if ((c == ARITH_AND) && (val == 0xfffffffe)) {
+        /* XXX: gross hack: preserve taint for the ANDed PC */
+    } else {
+        tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+        tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+    }
+    tgen_arithi_notaint(s, c, r0, val, cf);
 }
 
 static void tcg_out_addi(TCGContext *s, int reg, tcg_target_long val)
@@ -1254,6 +1328,30 @@ static inline void tcg_out_tlb_load(TCGContext *s, int addrlo_idx,
 }
 #endif
 
+static void tcg_out_ldtag_partial(TCGContext *s, int dst, int base, tcg_target_long ofs, int sizeop)
+{
+    int mask, scratch = TCG_REG_EAX;
+
+    /* we don't deal with loads crossing 4-byte boundaries */
+    assert(((ofs & 3) + (1 << sizeop)) <= 4);
+
+    mask = (1 << (((sizeop & 3) + 1) * 8)) - 1;
+    mask <<= (ofs & 0x3) * 8;
+    /* get the 4-byte tag */
+    tcg_out_modrm_offset(s, OPC_LEA, TCG_REG_ARGOS, base, ofs & 3);
+    tgen_arithi_notaint(s, ARITH_ADD, TCG_REG_ARGOS,
+			(tcg_target_long)argos_memmap -
+			(tcg_target_long)phys_ram_base,
+			0);
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, TCG_REG_ARGOS, 0);
+    tgen_arithi_notaint(s, ARITH_AND, TCG_REG_ARGOS, mask, 0);
+    tcg_out_push(s, scratch);
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)tag_for_reg(s, dst));
+    tgen_arithr_notaint(s, ARITH_OR, TCG_REG_ARGOS, scratch);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, dst));
+    tcg_out_pop(s, scratch);
+}
+
 static void tcg_out_qemu_ld_direct(TCGContext *s, int datalo, int datahi,
                                    int base, tcg_target_long ofs, int sizeop)
 {
@@ -1264,18 +1362,22 @@ static void tcg_out_qemu_ld_direct(TCGContext *s, int datalo, int datahi,
 #endif
     switch (sizeop) {
     case 0:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVZBL, datalo, base, ofs);
         break;
     case 0 | 4:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVSBL + P_REXW, datalo, base, ofs);
         break;
     case 1:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVZWL, datalo, base, ofs);
         if (bswap) {
             tcg_out_rolw_8(s, datalo);
         }
         break;
     case 1 | 4:
+        tcg_out_ldtag_partial(s, datalo, base, ofs, sizeop);
         if (bswap) {
             tcg_out_modrm_offset(s, OPC_MOVZWL, datalo, base, ofs);
             tcg_out_rolw_8(s, datalo);
@@ -1451,6 +1553,32 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args,
 #endif
 }
 
+static void tcg_out_sttag_partial(TCGContext *s, int src, int base, tcg_target_long ofs, int sizeop)
+{
+    int mask, scratch = TCG_REG_EAX;
+
+    /* we don't deal with loads crossing 4-byte boundaries */
+    assert(((ofs & 3) + (1 << sizeop)) <= 4);
+
+    mask = (1 << (((sizeop & 3) + 1) * 8)) - 1;
+    mask <<= (ofs & 0x3) * 8;
+    tcg_out_push(s, scratch);
+
+    /* get the 4-byte tag for the reg */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, src));
+    tgen_arithi_notaint(s, ARITH_AND, TCG_REG_ARGOS, mask, 0);
+    /* masked tag is in argos reg */
+
+    /* get old value of 4-byte tag for the memory location */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, base, ofs & ~0x3);
+
+    /* old tag value in scratch */
+    /* or them together, result in argos reg */
+    tgen_arithr_notaint(s, ARITH_OR, TCG_REG_ARGOS, scratch);
+    tcg_out_pop(s, scratch);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, base, ofs & ~0x3);
+}
+
 static void tcg_out_qemu_st_direct(TCGContext *s, int datalo, int datahi,
                                    int base, tcg_target_long ofs, int sizeop)
 {
@@ -1467,9 +1595,11 @@ static void tcg_out_qemu_st_direct(TCGContext *s, int datalo, int datahi,
 
     switch (sizeop) {
     case 0:
+        tcg_out_sttag_partial(s, datalo, base, ofs, sizeop);
         tcg_out_modrm_offset(s, OPC_MOVB_EvGv + P_REXB_R, datalo, base, ofs);
         break;
     case 1:
+        tcg_out_sttag_partial(s, datalo, base, ofs, sizeop);
         if (bswap) {
             tcg_out_mov(s, TCG_TYPE_I32, scratch, datalo);
             tcg_out_rolw_8(s, scratch);
