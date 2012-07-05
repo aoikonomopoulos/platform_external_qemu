@@ -1508,13 +1508,11 @@ void HELPER(set_cp15)(CPUState *env, uint32_t insn, uint32_t val)
 		env->regs[(insn >> 12) & 0xf] = argos_memmap_istainted(vtop(env, val));
 		break;
 	case 6:
-		argos_enabled = !0;
 		loglevel |= CPU_LOG_TB_OP|CPU_LOG_TB_OP_OPT|CPU_LOG_TB_OUT_ASM;
 		cpu_set_log_filename("/tmp/tcg.log");
 		break;
 	case 7:
 		loglevel &= ~(CPU_LOG_TB_OP|CPU_LOG_TB_OP_OPT|CPU_LOG_TB_OUT_ASM);
-		argos_enabled = 0;
 		break;
         default:
             goto bad_reg;
