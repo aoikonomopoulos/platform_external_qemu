@@ -769,15 +769,11 @@ static inline void tcg_out_pushi(TCGContext *s, tcg_target_long val)
     }
 }
 
-static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
+static void tcg_out_shifti_notaint(TCGContext *s, int subopc, int reg, int count)
 {
     /* Propagate an opcode prefix, such as P_DATA16.  */
     int ext = subopc & ~0x7;
     subopc &= 0x7;
-
-    /* XXX: be smarter about when to clear the tag */
-    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
-    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_for_reg(s, reg));
 
     if (count == 1) {
         tcg_out_modrm(s, OPC_SHIFT_1 + ext, subopc, reg);
@@ -785,6 +781,18 @@ static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
         tcg_out_modrm(s, OPC_SHIFT_Ib + ext, subopc, reg);
         tcg_out8(s, count);
     }
+}
+
+static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
+{
+    argos_rtag_t *tag = tag_for_reg(s, reg);
+
+    /* XXX: hack. */
+    tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+    tcg_out_shifti_notaint(s, subopc, TCG_REG_ARGOS, count);
+    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+
+    tcg_out_shifti_notaint(s, subopc, reg, count);
 }
 
 static inline void tcg_out_bswap32(TCGContext *s, int reg)
