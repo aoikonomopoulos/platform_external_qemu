@@ -623,12 +623,16 @@ static inline void tcg_out_ldreg(TCGContext *s, TCGType type, int ret, int arg1,
     if (arg1 != TCG_AREG0)
 	    abort();
     /* XXX: the following assumes regs come first in the CPUState */
-    if (arg2 >= (CPU_NB_REGS * sizeof(target_ulong))) {
-	    /* XXX: not a write to a 'hard' guest register, ignore for now */
-	    return;
+    if (arg2 < (CPU_NB_REGS * sizeof(target_ulong))) {
+        tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
+        tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
+    } else if ((arg2 >= s->frame_start) && (arg2 < s->frame_end)) {
+        tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + sizeof(cpu_single_env->temp_buf_shadow));
+        tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
+    } else {
+        /* XXX: not a write to a 'hard' guest register, ignore for now */
+        return;
     }
-    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
-    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_ret);
 }
 
 enum loadstore {
@@ -725,12 +729,16 @@ static inline void tcg_out_streg(TCGContext *s, TCGType type, int arg,
 	    return;
     }
     tcg_out_st_notaint(s, type, arg, arg1, arg2);
-    if (arg2 >= (CPU_NB_REGS * sizeof(target_ulong))) {
-	    /* XXX: not a write to a 'hard' guest register, ignore for now */
-	    return;
+    if (arg2 < (CPU_NB_REGS * sizeof(target_ulong))) {
+        tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
+        tcg_out_st_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
+    } else if ((arg2 >= s->frame_start) && (arg2 < s->frame_end)) {
+        tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
+        tcg_out_st_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + sizeof(cpu_single_env->temp_buf_shadow));
+    } else {
+        /* XXX: not a write to a 'hard' guest register, ignore for now */
+        return;
     }
-    tcg_out_ld_notaint(s, type, TCG_REG_ARGOS, -1, (tcg_target_long)tag_arg);
-    tcg_out_st_notaint(s, type, TCG_REG_ARGOS, arg1, arg2 + CPU_NB_REGS * sizeof(target_ulong));
 }
 
 static inline void tcg_out_mov(TCGContext *s, TCGType type, int ret, int arg)
