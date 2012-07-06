@@ -594,11 +594,23 @@ tag_for_reg(TCGContext *s, int reg, const char *func, const char *file, int l)
 /* Generate dest op= src.  Uses the same ARITH_* codes as tgen_arithi.  */
 static inline void tgen_arithr(TCGContext *s, int subop, int dest, int src)
 {
-    argos_rtag_t *tag = tag_for_reg(s, dest);
+    argos_rtag_t *tag_dst = tag_for_reg(s, dest);
+    argos_rtag_t *tag_src = tag_for_reg(s, src);
+    int scratch = TCG_REG_EAX;
+
     tgen_arithr_notaint(s, subop, dest, src);
-    /* unconditionally clear the tag for the destination register */
-    tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
-    tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag);
+    if (subop == ARITH_OR) {
+        tcg_out_push(s, scratch);
+        tcg_out_ld_notaint(s, TCG_TYPE_I32, scratch, -1, (tcg_target_long)tag_src);
+        tcg_out_ld_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_dst);
+        tgen_arithr_notaint(s, ARITH_OR, TCG_REG_ARGOS, scratch);
+        tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_dst);
+        tcg_out_pop(s, scratch);
+    } else {
+        /* unconditionally clear the tag for the destination register */
+        tcg_out_movi_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, 0);
+        tcg_out_st_notaint(s, TCG_TYPE_I32, TCG_REG_ARGOS, -1, (tcg_target_long)tag_dst);
+    }
 }
 
 static void tcg_out_movi(TCGContext *s, TCGType type,
