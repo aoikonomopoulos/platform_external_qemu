@@ -1313,16 +1313,16 @@ static inline void tcg_out_tlb_load(TCGContext *s, int addrlo_idx,
         rexw = P_REXW;
     }
 
-    tcg_out_mov(s, type, r1, addrlo);
-    tcg_out_mov(s, type, r0, addrlo);
+    tcg_out_mov_notaint(s, type, r1, addrlo);
+    tcg_out_mov_notaint(s, type, r0, addrlo);
 
     tcg_out_shifti(s, SHIFT_SHR + rexw, r1,
                    TARGET_PAGE_BITS - CPU_TLB_ENTRY_BITS);
 
-    tgen_arithi(s, ARITH_AND + rexw, r0,
-                TARGET_PAGE_MASK | ((1 << s_bits) - 1), 0);
-    tgen_arithi(s, ARITH_AND + rexw, r1,
-                (CPU_TLB_SIZE - 1) << CPU_TLB_ENTRY_BITS, 0);
+    tgen_arithi_notaint(s, ARITH_AND + rexw, r0,
+                        TARGET_PAGE_MASK | ((1 << s_bits) - 1), 0);
+    tgen_arithi_notaint(s, ARITH_AND + rexw, r1,
+                        (CPU_TLB_SIZE - 1) << CPU_TLB_ENTRY_BITS, 0);
 
     tcg_out_modrm_sib_offset(s, OPC_LEA + P_REXW, r1, TCG_AREG0, r1, 0,
                              offsetof(CPUState, tlb_table[mem_index][0])
@@ -1331,7 +1331,7 @@ static inline void tcg_out_tlb_load(TCGContext *s, int addrlo_idx,
     /* cmp 0(r1), r0 */
     tcg_out_modrm_offset(s, OPC_CMP_GvEv + rexw, r0, r1, 0);
 
-    tcg_out_mov(s, type, r0, addrlo);
+    tcg_out_mov_notaint(s, type, r0, addrlo);
 
     /* jne label1 */
     tcg_out8(s, OPC_JCC_short + JCC_JNE);
